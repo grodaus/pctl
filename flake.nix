@@ -80,7 +80,6 @@
           test-render = import ./tests/nix/render {inherit pkgs yants;};
           test-mkproject = import ./tests/nix/mkProject.nix {inherit pkgs yants;};
           test-nu = import ./tests/nu {inherit pkgs;};
-          test-integration = import ./tests/integration {inherit pkgs;};
         };
       };
 
