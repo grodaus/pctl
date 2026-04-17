@@ -1,0 +1,88 @@
+#!/usr/bin/env nu
+
+use std assert
+use ../../pctl/lib/install.nu *
+
+# ---- helpers ----
+
+def setup-store [dir: string] {
+  mkdir $dir
+  "[Unit]\nDescription=pctl project @@PROJECT@@\n\n[Slice]\n"
+    | save -f ($dir | path join "pctl-@@PROJECT@@.slice")
+  "[Unit]\nDescription=pctl service web\n\n[Service]\nExecStart=/bin/w\nSlice=pctl-@@PROJECT@@.slice\n"
+    | save -f ($dir | path join "pctl-@@PROJECT@@-web.service")
+}
+
+let tmpbase = mktemp -d -t pctl-install-test-XXXXXX
+let store = $tmpbase | path join "store"
+let runtime = $tmpbase | path join "runtime"
+setup-store $store
+
+# ---- RED1/GREEN1: filename substitution ----
+let result = install-units $store $runtime "foo-deadbeef" "127.0.0.42"
+let unitDir = $runtime | path join "systemd/user.control"
+let installed_names = ls $unitDir | get name | each { path basename } | sort
+assert ("pctl-foo-deadbeef.slice" in $installed_names)
+assert ("pctl-foo-deadbeef-web.service" in $installed_names)
+# filenames must NOT contain the placeholder
+assert (not ($installed_names | any { |n| $n =~ '@@PROJECT@@' }))
+
+# ---- RED2/GREEN2: in-file content substitution ----
+let sliceContent = open --raw ($unitDir | path join "pctl-foo-deadbeef.slice")
+assert (not ($sliceContent | str contains "@@PROJECT@@"))
+assert ($sliceContent | str contains "pctl project foo-deadbeef")
+let webContent = open --raw ($unitDir | path join "pctl-foo-deadbeef-web.service")
+assert (not ($webContent | str contains "@@PROJECT@@"))
+assert ($webContent | str contains "Slice=pctl-foo-deadbeef.slice")
+
+# ---- RED3/GREEN3: drop-ins present with PCTL_HOST (service) + PCTL_ID (both) ----
+let webDropin = $unitDir | path join "pctl-foo-deadbeef-web.service.d/pctl-runtime.conf"
+assert ($webDropin | path exists)
+let webDropinContent = open --raw $webDropin
+assert ($webDropinContent | str contains "[Service]")
+assert ($webDropinContent | str contains "Environment=PCTL_HOST=127.0.0.42")
+assert ($webDropinContent | str contains "Environment=PCTL_ID=foo-deadbeef")
+
+let sliceDropin = $unitDir | path join "pctl-foo-deadbeef.slice.d/pctl-runtime.conf"
+assert ($sliceDropin | path exists)
+let sliceDropinContent = open --raw $sliceDropin
+# slice drop-in carries PCTL_ID only, no host
+assert ($sliceDropinContent | str contains "PCTL_ID=foo-deadbeef")
+assert (not ($sliceDropinContent | str contains "PCTL_HOST"))
+
+# returned record shape: installed + dropins, sorted
+assert ("installed" in ($result | columns))
+assert ("dropins" in ($result | columns))
+assert equal $result.installed ($result.installed | sort)
+assert equal $result.dropins ($result.dropins | sort)
+assert equal ($result.installed | length) 2
+assert equal ($result.dropins | length) 2
+
+# ---- RED4/GREEN4: idempotency — second run leaves same content, no error ----
+let before = ls $unitDir | get name | each { path basename } | sort
+install-units $store $runtime "foo-deadbeef" "127.0.0.42"
+let after = ls $unitDir | get name | each { path basename } | sort
+assert equal $before $after
+# content still correct after second run
+let webContent2 = open --raw ($unitDir | path join "pctl-foo-deadbeef-web.service")
+assert equal $webContent $webContent2
+
+# ---- RED5/GREEN5: uninstall leaves decoys alone ----
+let decoy = $unitDir | path join "other-project-web.service"
+"decoy\n" | save -f $decoy
+assert ($decoy | path exists)
+
+let removed = uninstall-units $runtime "foo-deadbeef"
+# all removed paths sorted
+assert equal $removed ($removed | sort)
+# decoy survives
+assert ($decoy | path exists)
+# project files gone
+assert (not (($unitDir | path join "pctl-foo-deadbeef.slice") | path exists))
+assert (not (($unitDir | path join "pctl-foo-deadbeef-web.service") | path exists))
+# drop-in dirs gone
+assert (not (($unitDir | path join "pctl-foo-deadbeef-web.service.d") | path exists))
+assert (not (($unitDir | path join "pctl-foo-deadbeef.slice.d") | path exists))
+
+# cleanup
+rm -rf $tmpbase
