@@ -1,53 +1,46 @@
+use units.nu *
+
 export def install-units [
-  storeTree: path
-  runtimeDir: path
-  projectId: string
+  store_tree: path
+  runtime_dir: path
+  project_id: string
   host: string
 ] {
-  let unitDir = $runtimeDir | path join "systemd/user.control"
-  mkdir $unitDir
+  let target = unit-dir $runtime_dir
+  mkdir $target
 
-  let results = ls $storeTree
+  let results = ls $store_tree
     | get name
     | each { |p|
       let base = $p | path basename
-      let target_base = $base | str replace -a '@@PROJECT@@' $projectId
-      let target = $unitDir | path join $target_base
-      open --raw $p | str replace -a '@@PROJECT@@' $projectId | save -f $target
+      let target_base = $base | str replace -a '@@PROJECT@@' $project_id
+      let target_path = $target | path join $target_base
+      open --raw $p | str replace -a '@@PROJECT@@' $project_id | save -f $target_path
 
-      let dropinDir = $target + ".d"
-      mkdir $dropinDir
-      let dropinPath = $dropinDir | path join "pctl-runtime.conf"
+      let dropin_dir = $target_path + ".d"
+      mkdir $dropin_dir
+      let dropin_path = $dropin_dir | path join "pctl-runtime.conf"
       let body = if ($target_base | str ends-with ".slice") {
-        $"[Slice]\nEnvironment=PCTL_ID=($projectId)\n"
+        $"[Slice]\nEnvironment=PCTL_ID=($project_id)\n"
       } else {
-        $"[Service]\nEnvironment=PCTL_HOST=($host)\nEnvironment=PCTL_ID=($projectId)\n"
+        $"[Service]\nEnvironment=PCTL_HOST=($host)\nEnvironment=PCTL_ID=($project_id)\n"
       }
-      $body | save -f $dropinPath
+      $body | save -f $dropin_path
 
-      { installed: $target, dropin: $dropinPath }
+      { installed: $target_path, dropin: $dropin_path }
     }
 
-  let installed = $results | get installed | sort
-  let dropins = $results | get dropin | sort
-  { installed: $installed, dropins: $dropins }
+  {
+    installed: ($results | get installed | sort)
+    dropins: ($results | get dropin | sort)
+  }
 }
 
-export def uninstall-units [runtimeDir: path, projectId: string] {
-  let unitDir = $runtimeDir | path join "systemd/user.control"
-  if not ($unitDir | path exists) {
-    return []
-  }
-  let dotPrefix = $"pctl-($projectId)."
-  let dashPrefix = $"pctl-($projectId)-"
-
-  let matching = ls $unitDir
+export def uninstall-units [runtime_dir: path, project_id: string] {
+  let matching = ls (unit-dir $runtime_dir)
     | get name
-    | where { |p|
-      let base = $p | path basename
-      ($base | str starts-with $dotPrefix) or ($base | str starts-with $dashPrefix)
-    }
+    | where { |p| is-project-unit $project_id ($p | path basename) }
 
-  $matching | each { |p| rm -rf $p } | ignore
+  for p in $matching { rm -rf $p }
   $matching | sort
 }

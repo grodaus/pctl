@@ -1,10 +1,3 @@
-# pctl init — scaffold a flake.nix + .gitignore in the current directory.
-#
-# Templates live at <pctl-install>/templates/init/{flake.nix,.gitignore}.
-# This file is at pctl/commands/init.nu; templates are at ../../templates/init
-# relative to this file.
-
-const script_dir = path self | path dirname
 const templates_dir = path self | path dirname | path join ".." ".." "templates" "init"
 
 export def main [--force] {
@@ -19,18 +12,14 @@ export def main [--force] {
   let src_flake = $templates_dir | path join "flake.nix"
   let src_gitignore = $templates_dir | path join ".gitignore"
 
-  if not ($src_flake | path exists) {
-    error make { msg: $"pctl init: template flake.nix missing at ($src_flake)" }
-  }
-
   open --raw $src_flake | save -f $target_flake
   if ($src_gitignore | path exists) {
     if ($target_gitignore | path exists) {
-      # append missing lines rather than clobber
-      let existing = open --raw $target_gitignore
-      let template = open --raw $src_gitignore
-      let needed = $template | lines | where { |l| not ($existing | str contains $l) }
+      let existing_lines = open --raw $target_gitignore | lines
+      let template_lines = open --raw $src_gitignore | lines
+      let needed = $template_lines | where { |l| $l not-in $existing_lines }
       if ($needed | is-not-empty) {
+        let existing = open --raw $target_gitignore
         $"($existing)\n(($needed | str join "\n"))\n" | save -f $target_gitignore
       }
     } else {

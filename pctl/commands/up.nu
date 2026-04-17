@@ -1,66 +1,34 @@
+use ../lib/build.nu *
+use ../lib/context.nu *
 use ../lib/identity.nu *
 use ../lib/install.nu *
 use ../lib/registry.nu *
 use ../lib/sysctl.nu *
+use ../lib/units.nu *
 
 # pctl up — install units, start the project slice.
 #
 # Either --tree (pre-built fake store tree, skips `nix build`) or --nix
 # (flake attribute to build, default `.#pctl`) provides the rendered unit tree.
-# --path overrides cwd for project-id derivation (needed by tests).
 export def main [
-  --tree: string                   # path to an already-built store tree; skips nix build
-  --nix: string = ".#pctl"         # flake attribute to build
-  --path: string                   # override project path (default: cwd)
-  --quiet                          # suppress systemctl banner
+  --tree: string
+  --nix: string = ".#pctl"
+  --path: string
+  --quiet
 ] {
-  let runtime_dir = $env.XDG_RUNTIME_DIR? | default ""
-  if ($runtime_dir | is-empty) {
-    error make { msg: "pctl up: XDG_RUNTIME_DIR is not set (pctl requires Linux + systemd --user)" }
-  }
+  let runtime_dir = require-runtime-dir
+  let project_path = resolve-project-path $path
+  let id = (derive-id $project_path).id
 
-  let project_path = if ($path | is-empty) { pwd | path expand } else { $path | path expand }
-  let ident = derive-id $project_path
-  let id = $ident.id
-
-  let store_tree = if ($tree | is-empty) {
-    # Build via nix.
-    if not $quiet {
-      print $"$ nix build ($nix) --no-link --print-out-paths"
-    }
-    let built = ^nix build $nix --no-link --print-out-paths | complete
-    if $built.exit_code != 0 {
-      error make { msg: $"pctl up: nix build failed: ($built.stderr)" }
-    }
-    $built.stdout | str trim | lines | last
-  } else {
-    $tree | path expand
-  }
-
-  if not ($store_tree | path exists) {
-    error make { msg: $"pctl up: store tree does not exist: ($store_tree)" }
-  }
+  let store_tree = resolve-store-tree $nix $tree --quiet=$quiet
 
   let host = allocate-host $id (taken-hosts $runtime_dir)
 
-  let unit_dir = $runtime_dir | path join "systemd" "user.control"
-  mkdir $unit_dir
-
+  let target = unit-dir $runtime_dir
+  mkdir $target
   install-units $store_tree $runtime_dir $id $host
 
-  # Compute manifest from the installed files (exclude .d drop-in dirs).
-  let manifest = ls $unit_dir
-    | where type == file
-    | get name
-    | where { |p|
-      let base = $p | path basename
-      ($base | str starts-with $"pctl-($id).") or ($base | str starts-with $"pctl-($id)-")
-    }
-    | reduce -f {} { |p, acc|
-      let base = $p | path basename
-      let h = open --raw $p | hash sha256
-      $acc | insert $base $h
-    }
+  let manifest = compute-manifest $target $id
 
   let started_at = date now | format date "%Y-%m-%dT%H:%M:%S%:z"
   registry-write $runtime_dir $id {
@@ -71,15 +39,14 @@ export def main [
   }
 
   run-systemctl daemon-reload --quiet=$quiet
-  run-systemctl start $"pctl-($id).slice" --quiet=$quiet
+  run-systemctl start (slice-unit $id) --quiet=$quiet
 
-  # Starting a slice only activates the cgroup; services inside it do not
-  # auto-start. Kick off each .service explicitly. systemd honours the
-  # Requires=/After= graph emitted by render.service for dep ordering.
+  # Starting a slice only activates the cgroup; child services don't auto-start.
+  # Kick each .service explicitly — systemd honours the Requires=/After= graph.
   let services = $manifest | columns | where { |n| $n | str ends-with ".service" } | sort
-  $services | each { |svc|
+  for svc in $services {
     run-systemctl start $svc --quiet=$quiet
-  } | ignore
+  }
 
   let unit_count = $manifest | columns | length
   print $"project ($id) up · ($unit_count) units · host=($host)"

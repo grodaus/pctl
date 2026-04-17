@@ -10,8 +10,7 @@
     else "${key}=${value}\n";
 
   renderSection = sectionName: kv: let
-    sortedKeys = builtins.sort (a: b: a < b) (builtins.attrNames kv);
-    body = lib.concatMapStrings (k: renderLine k kv.${k}) sortedKeys;
+    body = lib.concatStrings (lib.mapAttrsToList renderLine kv);
   in "[${sectionName}]\n${body}";
 
   joinSections = sections: lib.concatStringsSep "\n" sections;
@@ -32,62 +31,32 @@
 
     deps = service.dependsOn or [];
     depUnits = map (d: "pctl-${projectId}-${d}.service") deps;
-    depAttrs =
-      if deps == []
-      then {}
-      else {
+
+    unitSection =
+      {Description = "pctl service ${name}";}
+      // lib.optionalAttrs (deps != []) {
         After = depUnits;
         Requires = depUnits;
       };
 
-    unitSection =
-      {
-        Description = "pctl service ${name}";
-      }
-      // depAttrs;
-
-    execStart = lib.concatStringsSep " " service.command;
-
     envAttrs = service.env or {};
-    envKeys = builtins.sort (a: b: a < b) (builtins.attrNames envAttrs);
-    envLines = map (k: "${k}=${envAttrs.${k}}") envKeys;
-    envAttr =
-      if envLines == []
-      then {}
-      else {Environment = envLines;};
+    envLines = lib.mapAttrsToList (k: v: "${k}=${v}") envAttrs;
 
-    restartAttr =
-      if service ? restart
-      then {Restart = service.restart;}
-      else {};
-
-    limitsAttrs = let
-      l = service.limits or {};
-    in
-      (
-        if l ? memoryMax
-        then {MemoryMax = l.memoryMax;}
-        else {}
-      )
-      // (
-        if l ? cpuQuota
-        then {CPUQuota = l.cpuQuota;}
-        else {}
-      );
-
-    overrideAttrs = service.serviceConfig or {};
+    limits = service.limits or {};
 
     serviceSection =
       sandboxDefaults
       // {
-        ExecStart = execStart;
+        ExecStart = lib.concatStringsSep " " service.command;
         Slice = sliceName;
       }
-      // envAttr // restartAttr // limitsAttrs // overrideAttrs;
+      // lib.optionalAttrs (envLines != []) {Environment = envLines;}
+      // lib.optionalAttrs (service ? restart) {Restart = service.restart;}
+      // lib.optionalAttrs (limits ? memoryMax) {MemoryMax = limits.memoryMax;}
+      // lib.optionalAttrs (limits ? cpuQuota) {CPUQuota = limits.cpuQuota;}
+      // (service.serviceConfig or {});
 
-    installSection = {
-      WantedBy = targetName;
-    };
+    installSection = {WantedBy = targetName;};
   in
     joinSections [
       (renderSection "Unit" unitSection)

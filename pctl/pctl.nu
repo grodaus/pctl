@@ -1,9 +1,4 @@
 #!/usr/bin/env nu
-#
-# pctl — declarative Nix spec → systemd user units.
-#
-# This is a thin dispatcher. Each verb lives in pctl/commands/<verb>.nu
-# as `export def main [...]` and is forwarded here via nu subcommand pattern.
 
 use commands/init.nu
 use commands/up.nu
@@ -14,40 +9,35 @@ use commands/restart.nu
 use commands/logs.nu
 use commands/list.nu
 
-def main [] {
-  print "usage: pctl <verb> [args...]"
-  print ""
-  print "verbs:"
-  print "  init          scaffold a flake.nix + .gitignore in cwd"
-  print "  up            build, install, and start the project slice"
-  print "  down          stop the project slice and remove its units"
-  print "  status [svc]  show status of the slice or one service"
-  print "  logs [svc]    tail journal for the slice or one service"
-  print "  restart [svc] restart the slice or one service"
-  print "  reload        rebuild, diff, minimally restart changed units"
-  print "  ls            list all registered projects"
-}
+# pctl — declarative Nix spec → systemd --user units.
+def main [] {}
 
-def "main init" [--force] {
+# Scaffold flake.nix + .gitignore in the current directory.
+def "main init" [
+  --force   # overwrite an existing flake.nix
+] {
   init --force=$force
 }
 
+# Build the project, install units, and start the project slice.
 def "main up" [
-  --tree: string
-  --nix: string = ".#pctl"
-  --path: string
-  --quiet
+  --tree: string             # use a pre-built unit tree (skips `nix build`)
+  --nix: string = ".#pctl"   # flake attribute to build
+  --path: string             # override project path (default: cwd)
+  --quiet                    # suppress systemctl banner
 ] {
   up --tree $tree --nix $nix --path $path --quiet=$quiet
 }
 
+# Stop the project slice, uninstall its units, drop the registry entry.
 def "main down" [
-  --path: string
+  --path: string   # override project path (default: cwd)
   --quiet
 ] {
   down --path $path --quiet=$quiet
 }
 
+# Rebuild, diff against the stored manifest, minimally restart changed units.
 def "main reload" [
   --tree: string
   --nix: string = ".#pctl"
@@ -57,24 +47,36 @@ def "main reload" [
   reload --tree $tree --nix $nix --path $path --quiet=$quiet
 }
 
-def "main status" [service?: string, --path: string, --quiet] {
+# Show systemctl status for the project slice (or a single service).
+def "main status" [
+  service?: string   # service name; omit for the whole slice
+  --path: string
+  --quiet
+] {
   status $service --path $path --quiet=$quiet
 }
 
-def "main restart" [service?: string, --path: string, --quiet] {
+# Restart the project slice (or a single service).
+def "main restart" [
+  service?: string
+  --path: string
+  --quiet
+] {
   restart $service --path $path --quiet=$quiet
 }
 
+# Tail the journal for the project slice (or a single service).
 def "main logs" [
   service?: string
   --path: string
-  --follow (-f)
-  --lines (-n): int = 100
+  --follow (-f)           # tail -f behaviour
+  --lines (-n): int = 100 # number of lines to show
   --quiet
 ] {
   logs $service --path $path --follow=$follow --lines $lines --quiet=$quiet
 }
 
+# List every registered project with its running state.
 def "main ls" [--quiet] {
   list --quiet=$quiet
 }
