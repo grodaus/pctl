@@ -9,6 +9,7 @@ use commands/restart.nu
 use commands/logs.nu
 use commands/list.nu
 use commands/host.nu
+use commands/gc.nu
 
 # pctl — declarative Nix spec → systemd --user units.
 def main [] {}
@@ -94,4 +95,14 @@ def "main host" [
   --path: string   # override project path (default: cwd)
 ] {
   host --path $path
+}
+
+# Report (default) or delete (--yes) orphan state directories under
+# $XDG_STATE_HOME/pctl-*. Never touches state dirs marked `unknown`
+# (no persistent marker) or `live` (marker → path still exists).
+def "main gc" [
+  --yes     # delete orphan state directories
+  --quiet
+] {
+  gc --yes=$yes --quiet=$quiet
 }

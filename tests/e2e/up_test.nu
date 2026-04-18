@@ -3,7 +3,9 @@
 
 use std assert
 use harness.nu *
+use ../../pctl/lib/gc.nu state-home
 use ../../pctl/lib/identity.nu derive-id
+use ../../pctl/lib/known.nu known-path
 
 let scratch = setup {web: null, api: null}
 
@@ -34,6 +36,12 @@ try {
   # Environment landed on the running service.
   let env_out = ^systemctl --user show $web -p Environment --value | complete | get stdout | str trim
   assert ($env_out | str contains $"PCTL_ID=($id)")
+
+  # Persistent known-marker written so `pctl gc` can distinguish this
+  # project's state from orphaned leftovers after a future reboot.
+  let marker = known-path (state-home) $id
+  assert ($marker | path exists) $"known marker ($marker) missing after up"
+  assert equal (open --raw $marker | str trim) $scratch.project_dir
 
   print $"up_test OK — ($id)"
 } catch { |e|

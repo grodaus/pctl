@@ -1,7 +1,9 @@
 use ../lib/build.nu *
 use ../lib/context.nu *
+use ../lib/gc.nu state-home
 use ../lib/identity.nu *
 use ../lib/install.nu *
+use ../lib/known.nu known-write
 use ../lib/probe.nu *
 use ../lib/registry.nu *
 use ../lib/sysctl.nu *
@@ -63,6 +65,10 @@ export def main [
     manifest: $manifest
     started_at: $started_at
   }
+
+  # Persistent marker — survives `down` and reboot; `pctl gc` reads it to
+  # decide which state dirs belong to a project that still exists on disk.
+  known-write (state-home) $id $project_path
 
   run-systemctl daemon-reload --quiet=$quiet
   run-systemctl start (slice-unit $id) --quiet=$quiet

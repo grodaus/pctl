@@ -91,6 +91,9 @@ Inspect
 - `pctl logs [service]` — tail journald for a service, or the slice
 - `pctl list` — every pctl project registered on this session
 
+Maintenance
+- `pctl gc` — report state directories under `$XDG_STATE_HOME/pctl-*` as `live`, `orphan`, or `unknown`; `pctl gc --yes` deletes only `orphan` (a marker recorded by `pctl up` points at a project path that no longer exists). `unknown` dirs (no marker — pre-existing leaks or third-party pctl-\* state) are always reported, never deleted.
+
 Every command accepts `--help`.
 
 ## How it works

@@ -29,11 +29,22 @@
 | ---------------- | -------------------------------------------------------------------------------------------------------------- | ---------------------- |
 | **Project id**   | `<sanitized_basename>_<hash8>` deterministically derived from **project path**; appears in every unit name     | Name, slug             |
 | **Host**         | A `127.0.0.N` address allocated per project so concurrent projects never race on ports                         | IP, address            |
-| **Registry**     | Per-project state at `$XDG_RUNTIME_DIR/pctl/projects/<id>/`: `path`, `host`, `manifest.nuon`, `started_at`     | Store, database        |
+| **Registry**     | Per-project state at `$XDG_RUNTIME_DIR/pctl/projects/<id>/`: `path`, `host`, `manifest.nuon`, `started_at`. Session-scoped — cleared on reboot. | Store, database |
+| **Known marker** | Persistent per-project file at `$XDG_STATE_HOME/pctl/known/<id>` containing the absolute **project path**. Written on `up`, untouched by `down`, survives reboot. The only signal **gc** uses to tell a live project's state from garbage. | —           |
 | **PCTL_ID**      | Env var set in every drop-in exposing the **project id** to the service process                                | —                      |
 | **PCTL_HOST**    | Env var set in service drop-ins exposing the allocated **host** to the service process                         | —                      |
 | **@@PROJECT@@**  | Placeholder token in filenames and unit bodies inside the **store tree**, substituted at install time          | Template, marker       |
 | **Worktree**     | A distinct project path (e.g. a git worktree) whose identity-from-path rule guarantees a distinct **project id**, **slice**, and **host** — letting siblings coexist | Copy, clone |
+
+## Garbage collection
+
+| Term             | Definition                                                                                                                                | Aliases to avoid        |
+| ---------------- | ----------------------------------------------------------------------------------------------------------------------------------------- | ----------------------- |
+| **State dir**    | A directory under `$XDG_STATE_HOME` created by systemd from a service's `StateDirectory=pctl-@@PROJECT@@-<svc>` — persists across `down`  | StateDirectory, data dir |
+| **Gc**           | `pctl gc` — classifies every **state dir** by cross-referencing **known markers**; `--yes` deletes only classified-orphan dirs            | Cleanup, purge          |
+| **Live (gc)**    | A **state dir** whose **known marker** points at a **project path** that still exists on disk — kept                                      | Active                  |
+| **Orphan (gc)** | A **state dir** whose **known marker** points at a **project path** that no longer exists — the only class `gc --yes` deletes             | Stale, dead             |
+| **Unknown (gc)**| A **state dir** with no **known marker** — pre-existing leak or third-party `pctl-*` directory; reported only, never deleted automatically | Foreign                 |
 
 ## Reload diff
 
