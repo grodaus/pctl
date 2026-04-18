@@ -29,7 +29,22 @@ export def main [
 
   let store_tree = resolve-store-tree $nix $tree --quiet=$quiet
 
-  let host = allocate-host $id (taken-hosts $runtime_dir)
+  # Re-up: reuse the host and started_at already in the registry. Otherwise
+  # taken-hosts would include the project's own host, forcing allocate-host to
+  # pick a new slot — and systemctl start on already-active services is a
+  # no-op, so the running env would keep the old PCTL_HOST while disk/registry
+  # moved to the new one.
+  let existing = if ((registry-path $runtime_dir $id) | path exists) {
+    registry-read $runtime_dir $id
+  } else {
+    null
+  }
+
+  let host = if $existing == null {
+    allocate-host $id (taken-hosts $runtime_dir)
+  } else {
+    $existing.host
+  }
 
   let target = unit-dir $runtime_dir
   mkdir $target
@@ -37,7 +52,11 @@ export def main [
 
   let manifest = compute-manifest $target $id
 
-  let started_at = date now | format date "%Y-%m-%dT%H:%M:%S%:z"
+  let started_at = if $existing == null {
+    date now | format date "%Y-%m-%dT%H:%M:%S%:z"
+  } else {
+    $existing.started_at
+  }
   registry-write $runtime_dir $id {
     path: $project_path
     host: $host
