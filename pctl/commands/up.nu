@@ -2,6 +2,7 @@ use ../lib/build.nu *
 use ../lib/context.nu *
 use ../lib/identity.nu *
 use ../lib/install.nu *
+use ../lib/probe.nu *
 use ../lib/registry.nu *
 use ../lib/sysctl.nu *
 use ../lib/units.nu *
@@ -10,10 +11,16 @@ use ../lib/units.nu *
 #
 # Either --tree (pre-built fake store tree, skips `nix build`) or --nix
 # (flake attribute to build, default `.#pctl`) provides the rendered unit tree.
+#
+# --wait blocks until every service is ready: a declared readinessProbe exits 0,
+# or (for services without a probe) the unit reaches systemd "active". --timeout
+# bounds the whole wait.
 export def main [
   --tree: string
   --nix: string = ".#pctl"
   --path: string
+  --wait
+  --timeout: int = 30
   --quiet
 ] {
   let runtime_dir = require-runtime-dir
@@ -50,4 +57,15 @@ export def main [
 
   let unit_count = $manifest | columns | length
   print $"project ($id) up · ($unit_count) units · host=($host)"
+
+  if $wait {
+    let service_names = $manifest
+      | columns
+      | where { |n| $n | str ends-with ".service" }
+      | each { |n| $n | str replace -r $"^pctl-($id)-" "" | str replace -r '\.service$' "" }
+      | sort
+    let probes = load-probes $store_tree
+    let env_vars = { PCTL_HOST: $host, PCTL_ID: $id }
+    wait-ready $id $probes $service_names $env_vars ($timeout * 1sec)
+  }
 }

@@ -8,6 +8,7 @@ use commands/status.nu
 use commands/restart.nu
 use commands/logs.nu
 use commands/list.nu
+use commands/host.nu
 
 # pctl — declarative Nix spec → systemd --user units.
 def main [] {}
@@ -24,9 +25,11 @@ def "main up" [
   --tree: string             # use a pre-built unit tree (skips `nix build`)
   --nix: string = ".#pctl"   # flake attribute to build
   --path: string             # override project path (default: cwd)
+  --wait                     # block until every service is ready (probe or is-active)
+  --timeout: int = 30        # overall readiness timeout in seconds
   --quiet                    # suppress systemctl banner
 ] {
-  up --tree $tree --nix $nix --path $path --quiet=$quiet
+  up --tree $tree --nix $nix --path $path --wait=$wait --timeout $timeout --quiet=$quiet
 }
 
 # Stop the project slice, uninstall its units, drop the registry entry.
@@ -79,4 +82,11 @@ def "main logs" [
 # List every registered project with its running state.
 def "main ls" [--quiet] {
   list --quiet=$quiet
+}
+
+# Print the project's allocated 127.0.0.N on stdout.
+def "main host" [
+  --path: string   # override project path (default: cwd)
+] {
+  host --path $path
 }

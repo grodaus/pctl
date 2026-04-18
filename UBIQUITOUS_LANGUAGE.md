@@ -45,6 +45,15 @@
 | **Action: unchanged (=)**| Unit in both manifests, hashes equal — no-op                        | Same             |
 | **Action: removed (-)**  | Unit absent in new, present in old — `stop` and delete              | Gone, deleted    |
 
+## Readiness
+
+| Term                 | Definition                                                                                                                      | Aliases to avoid           |
+| -------------------- | ------------------------------------------------------------------------------------------------------------------------------- | -------------------------- |
+| **Readiness probe**  | The `readinessProbe` spec field — an exec argv `pctl up --wait` polls until it exits 0                                          | Healthcheck, liveness probe |
+| **Ready**            | A service whose **readiness probe** has exited 0 (or whose unit reached `active`, if no probe is declared)                      | Up, started, healthy       |
+| **Probes side-car**  | `probes.json` — file mkProject emits at the root of the **store tree** carrying every service's **readiness probe**; consumed only by the CLI, never rendered into a **unit** | Probe manifest, probes file |
+| **Wait**             | The `pctl up --wait` mode: after `up` starts every service, block until each is **ready** (or the overall timeout fires)        | Block, await               |
+
 ## Testing
 
 | Term            | Definition                                                                                                             | Aliases to avoid   |
