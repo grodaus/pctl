@@ -43,11 +43,12 @@ export def main [
         $"($k)=($n)"
       }
       | str join " "
+    # stderr keeps stdout JSON-parseable.
     if $yes {
       let nd = $rows | where deleted == true | length
-      print $"pctl gc: ($summary) — deleted ($nd)"
+      print -e $"pctl gc: ($summary) — deleted ($nd)"
     } else {
-      print $"pctl gc: ($summary) — pass --yes to delete orphans"
+      print -e $"pctl gc: ($summary) — pass --yes to delete orphans"
     }
   }
 

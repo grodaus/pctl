@@ -10,6 +10,7 @@ use commands/logs.nu
 use commands/list.nu
 use commands/host.nu
 use commands/gc.nu
+use lib/fmt.nu format-out
 
 # pctl — declarative Nix spec → systemd --user units.
 def main [] {}
@@ -81,13 +82,21 @@ def "main logs" [
 }
 
 # List every registered project with its running state.
-def "main ls" [--quiet] {
-  list --quiet=$quiet
+def "main ls" [
+  --quiet
+  --json    # force JSON output
+  --table   # force table output
+] {
+  list --quiet=$quiet | format-out --json=$json --table=$table
 }
 
 # Alias for `ls` — list every registered project with its running state.
-def "main list" [--quiet] {
-  list --quiet=$quiet
+def "main list" [
+  --quiet
+  --json    # force JSON output
+  --table   # force table output
+] {
+  list --quiet=$quiet | format-out --json=$json --table=$table
 }
 
 # Print the project's allocated 127.0.0.N on stdout.
@@ -103,6 +112,8 @@ def "main host" [
 def "main gc" [
   --yes     # delete orphan state directories
   --quiet
+  --json    # force JSON output
+  --table   # force table output
 ] {
-  gc --yes=$yes --quiet=$quiet
+  gc --yes=$yes --quiet=$quiet | format-out --json=$json --table=$table
 }

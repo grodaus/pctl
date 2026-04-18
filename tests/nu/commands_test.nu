@@ -19,6 +19,25 @@ def make-stub [logfile: string, code: int = 0]: nothing -> string {
   $stub
 }
 
+# is-active stub: real systemctl prints one state line per unit. The stub
+# emits `state` once per arg following `is-active`, so the helper sees a
+# realistic stdout shape regardless of how many units `list` queries.
+def make-is-active-stub [logfile: string, state: string, code: int]: nothing -> string {
+  let stub = mktemp -t pctl-cmds-stub-XXXXXX
+  let body = $'#!/bin/sh
+echo "$@" >> ($logfile)
+shift          # drop --user
+shift          # drop is-active
+for _u in "$@"; do
+  echo ($state)
+done
+exit ($code)
+'
+  $body | save -f $stub
+  chmod +x $stub
+  $stub
+}
+
 def read-last [logfile: string]: nothing -> string {
   open --raw $logfile | lines | where { |l| ($l | str trim) != "" } | last | str trim
 }
@@ -80,21 +99,22 @@ registry-write $tmpbase $id {
   manifest: {}
   started_at: "2026-04-17T10:00:00+00:00"
 }
-"" | save -f $log
+let active_log = $tmpbase | path join "active.log"
+"" | save -f $active_log
+let active_stub = make-is-active-stub $active_log "active" 0
+$env.PCTL_SYSTEMCTL = $active_stub
 let rows = list --quiet
-# list queried is-active, which logs "is-active pctl-<id>.slice"
 assert (($rows | length) == 1)
 assert equal ($rows | first | get id) $id
 assert equal ($rows | first | get host) "127.0.0.17"
-let last_log = read-last $log
+let last_log = read-last $active_log
 assert equal $last_log $"--user is-active pctl-($id).slice"
-# stub returned 0, so running=true
 assert equal ($rows | first | get running) true
 
-# ---- ls when is-active returns non-zero → running=false, no error ----
+# ---- ls when units are inactive → running=false, no error ----
 let fail_log = $tmpbase | path join "fail.log"
 "" | save -f $fail_log
-let fail_stub = make-stub $fail_log 3
+let fail_stub = make-is-active-stub $fail_log "inactive" 3
 $env.PCTL_SYSTEMCTL = $fail_stub
 let rows2 = list --quiet
 assert equal ($rows2 | first | get running) false
