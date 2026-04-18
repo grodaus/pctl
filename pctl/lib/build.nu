@@ -6,10 +6,12 @@ export def resolve-store-tree [
   --quiet
 ]: nothing -> string {
   if not ($tree | is-empty) { return ($tree | path expand) }
-  if not $quiet { print $"$ nix build ($nix) --no-link --print-out-paths" }
-  let built = ^nix build $nix --no-link --print-out-paths | complete
-  if $built.exit_code != 0 {
-    error make { msg: $"pctl: nix build failed: ($built.stderr)" }
+  if not $quiet { print -e $"$ nix build ($nix) --no-link --print-out-paths" }
+  # `| collect` captures stdout for the path; stderr streams live to the user.
+  let out = try {
+    ^nix build $nix --no-link --print-out-paths | collect
+  } catch { |e|
+    error make { msg: $"pctl: nix build failed with exit code ($e.exit_code)" }
   }
-  $built.stdout | str trim | lines | last
+  $out | str trim | lines | last
 }

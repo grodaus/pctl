@@ -1,24 +1,39 @@
-def run-wrapped [bin: string, args: list<string>, quiet: bool] {
+# No `| complete` — stdout/stderr stream through so `journalctl -f` works and
+# the caller sees output live. Banner on stderr keeps stdout JSON-parseable.
+def run-streamed [bin: string, args: list<string>, quiet: bool] {
   let full_args = ["--user"] ++ $args
   if not $quiet {
-    print $"$ ($bin) ($full_args | str join ' ')"
+    print -e $"$ ($bin) ($full_args | str join ' ')"
   }
-  let result = ^$bin ...$full_args | complete
-  if $result.exit_code != 0 {
+  try {
+    ^$bin ...$full_args
+  } catch { |e|
     error make {
-      msg: $"($bin) failed with exit code ($result.exit_code)"
+      msg: $"($bin) failed with exit code ($e.exit_code)"
       label: { text: "command exited non-zero", span: (metadata $bin).span }
     }
   }
-  $result
 }
 
 export def run-systemctl [...args: string, --quiet] {
   let bin = $env.PCTL_SYSTEMCTL? | default "systemctl"
-  run-wrapped $bin $args $quiet
+  run-streamed $bin $args $quiet
 }
 
 export def run-journalctl [...args: string, --quiet] {
   let bin = $env.PCTL_JOURNALCTL? | default "journalctl"
-  run-wrapped $bin $args $quiet
+  run-streamed $bin $args $quiet
+}
+
+# Batched `is-active` probe — one bool per unit, in input order. Single
+# subprocess for N units instead of N (matters for `pctl ls`). `do -i`
+# suppresses pipefail so we can read stdout even when systemctl exits
+# non-zero (which it does whenever any listed unit is inactive). Output is
+# always padded to `units | length`; missing lines count as not-active.
+export def systemctl-active [...units: string]: nothing -> list<bool> {
+  if ($units | is-empty) { return [] }
+  let bin = $env.PCTL_SYSTEMCTL? | default "systemctl"
+  let result = do -i { ^$bin --user is-active ...$units | complete }
+  let states = $result.stdout | str trim | lines
+  $units | enumerate | each { |it| ($states | get -o $it.index) == "active" }
 }
