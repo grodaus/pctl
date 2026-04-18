@@ -85,3 +85,18 @@ let mixed_stub = make-active-stub $mixed_log "inactive\ninactive" 4
 $env.PCTL_SYSTEMCTL = $mixed_stub
 let mixed = systemctl-active a b
 assert equal $mixed [false, false]
+
+# start-async: issues a single `start --no-block <units...>` call with every
+# unit in one subprocess, regardless of list length.
+let async_log = mktemp -t pctl-async-log-XXXXXX
+let async_stub = make-stub $async_log 0
+$env.PCTL_SYSTEMCTL = $async_stub
+start-async [foo.service bar.service baz.service] --quiet
+let async_recorded = open $async_log | str trim
+assert equal $async_recorded "--user start --no-block foo.service bar.service baz.service"
+
+# start-async: empty list → no subprocess spawned (log stays empty).
+"" | save -f $async_log
+start-async [] --quiet
+let empty_recorded = open $async_log | str trim
+assert equal $empty_recorded ""

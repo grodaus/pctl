@@ -20,6 +20,16 @@ export def run-systemctl [...args: string, --quiet] {
   run-streamed $bin $args $quiet
 }
 
+# Start N units in a single `systemctl --user start --no-block` call. The job
+# is enqueued and the command returns immediately — individual unit failures
+# do NOT propagate as a non-zero exit, so callers must observe outcomes via
+# `wait-ready` / `wait-all` / `pctl results`.
+export def start-async [units: list<string>, --quiet] {
+  if ($units | is-empty) { return }
+  let bin = $env.PCTL_SYSTEMCTL? | default "systemctl"
+  run-streamed $bin (["start" "--no-block"] ++ $units) $quiet
+}
+
 export def run-journalctl [...args: string, --quiet] {
   let bin = $env.PCTL_JOURNALCTL? | default "journalctl"
   run-streamed $bin $args $quiet

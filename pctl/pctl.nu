@@ -29,10 +29,11 @@ def "main up" [
   --nix: string = ".#pctl"   # flake attribute to build
   --path: string             # override project path (default: cwd)
   --wait                     # block until every service is ready (probe or is-active)
+  --no-block                 # enqueue all service starts in one async batch (failures do not abort)
   --timeout: int = 30        # overall readiness timeout in seconds
   --quiet                    # suppress systemctl banner
 ] {
-  up --tree $tree --nix $nix --path $path --wait=$wait --timeout $timeout --quiet=$quiet
+  up --tree $tree --nix $nix --path $path --wait=$wait --no-block=$no_block --timeout $timeout --quiet=$quiet
 }
 
 # Stop the project slice, uninstall its units, drop the registry entry.

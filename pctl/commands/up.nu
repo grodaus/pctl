@@ -17,11 +17,18 @@ use ../lib/units.nu *
 # --wait blocks until every service is ready: a declared readinessProbe exits 0,
 # or (for services without a probe) the unit reaches systemd "active". --timeout
 # bounds the whole wait.
+#
+# --no-block enqueues every service start in one `systemctl --user start
+# --no-block` call and returns immediately, without waiting for any ExecStart
+# to complete. A failing unit does NOT abort the batch. Use this when starting
+# N parallel oneshot services and collect outcomes afterwards via `pctl
+# results` (or combine with --wait to block on readiness once enqueued).
 export def main [
   --tree: string
   --nix: string = ".#pctl"
   --path: string
   --wait
+  --no-block
   --timeout: int = 30
   --quiet
 ] {
@@ -77,12 +84,20 @@ export def main [
   # Starting a slice only activates the cgroup; child services don't auto-start.
   # Kick each .service explicitly — systemd honours the Requires=/After= graph.
   let services = $manifest | columns | where { |n| $n | str ends-with ".service" } | sort
-  for svc in $services {
-    run-systemctl start $svc --quiet=$quiet
+  if $no_block {
+    # Single async batch call: enqueue every service, return immediately. A
+    # failing unit does not abort the batch — outcomes are observable via
+    # `pctl results` (or --wait below).
+    start-async $services --quiet=$quiet
+  } else {
+    for svc in $services {
+      run-systemctl start $svc --quiet=$quiet
+    }
   }
 
   let unit_count = $manifest | columns | length
-  print $"project ($id) up · ($unit_count) units · host=($host)"
+  let suffix = if $no_block { " (async)" } else { "" }
+  print $"project ($id) up · ($unit_count) units · host=($host)($suffix)"
 
   if $wait {
     let service_names = $manifest

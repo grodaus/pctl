@@ -93,7 +93,7 @@ Setup
 - `pctl init` — scaffold `flake.nix` and `.gitignore`
 
 Lifecycle
-- `pctl up` — build the spec, install units, start the slice
+- `pctl up` — build the spec, install units, start the slice. `--wait` blocks until every service is ready (probe or active); `--no-block` enqueues all service starts in one async batch (for parallel oneshots — collect outcomes afterwards with `pctl results`).
 - `pctl down` — stop the slice, remove units, drop the registry entry
 - `pctl restart [service]` — restart one service, or the whole slice
 
