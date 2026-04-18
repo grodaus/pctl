@@ -84,6 +84,11 @@ def "main ls" [--quiet] {
   list --quiet=$quiet
 }
 
+# Alias for `ls` — list every registered project with its running state.
+def "main list" [--quiet] {
+  list --quiet=$quiet
+}
+
 # Print the project's allocated 127.0.0.N on stdout.
 def "main host" [
   --path: string   # override project path (default: cwd)
