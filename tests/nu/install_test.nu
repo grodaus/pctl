@@ -9,7 +9,7 @@ def setup-store [dir: string] {
   mkdir $dir
   "[Unit]\nDescription=pctl project @@PROJECT@@\n\n[Slice]\n"
     | save -f ($dir | path join "pctl-@@PROJECT@@.slice")
-  "[Unit]\nDescription=pctl service web\n\n[Service]\nExecStart=/bin/w\nSlice=pctl-@@PROJECT@@.slice\n"
+  "[Unit]\nDescription=pctl service web\n\n[Service]\nExecStart=/bin/w\nSlice=pctl-@@PROJECT@@.slice\nWorkingDirectory=@@PROJECT_PATH@@\n"
     | save -f ($dir | path join "pctl-@@PROJECT@@-web.service")
 }
 
@@ -19,7 +19,8 @@ let runtime = $tmpbase | path join "runtime"
 setup-store $store
 
 # ---- RED1/GREEN1: filename substitution ----
-let result = install-units $store $runtime "foo-deadbeef" "127.0.0.42"
+let project_path = "/home/somebody/projects/foo"
+let result = install-units $store $runtime {id: "foo-deadbeef", host: "127.0.0.42", path: $project_path}
 let unitDir = $runtime | path join "systemd/user.control"
 let installed_names = ls $unitDir | get name | each { path basename } | sort
 assert ("pctl-foo-deadbeef.slice" in $installed_names)
@@ -33,7 +34,9 @@ assert (not ($sliceContent | str contains "@@PROJECT@@"))
 assert ($sliceContent | str contains "pctl project foo-deadbeef")
 let webContent = open --raw ($unitDir | path join "pctl-foo-deadbeef-web.service")
 assert (not ($webContent | str contains "@@PROJECT@@"))
+assert (not ($webContent | str contains "@@PROJECT_PATH@@"))
 assert ($webContent | str contains "Slice=pctl-foo-deadbeef.slice")
+assert ($webContent | str contains $"WorkingDirectory=($project_path)")
 
 # ---- RED3/GREEN3: drop-ins present with PCTL_HOST (service) + PCTL_ID (both) ----
 let webDropin = $unitDir | path join "pctl-foo-deadbeef-web.service.d/pctl-runtime.conf"
@@ -60,7 +63,7 @@ assert equal ($result.dropins | length) 2
 
 # ---- RED4/GREEN4: idempotency — second run leaves same content, no error ----
 let before = ls $unitDir | get name | each { path basename } | sort
-install-units $store $runtime "foo-deadbeef" "127.0.0.42"
+install-units $store $runtime {id: "foo-deadbeef", host: "127.0.0.42", path: $project_path}
 let after = ls $unitDir | get name | each { path basename } | sort
 assert equal $before $after
 # content still correct after second run
@@ -94,7 +97,7 @@ setup-store $store2
 '{"web": {"exec": ["/bin/true"], "periodSeconds": 1, "timeoutSeconds": 30}}'
   | save -f ($store2 | path join "probes.json")
 
-let result2 = install-units $store2 $runtime2 "bar-cafebabe" "127.0.0.43"
+let result2 = install-units $store2 $runtime2 {id: "bar-cafebabe", host: "127.0.0.43", path: "/home/somebody/projects/bar"}
 let unitDir2 = $runtime2 | path join "systemd/user.control"
 let installed2 = ls $unitDir2 | get name | each { path basename } | sort
 assert (not ("probes.json" in $installed2)) $"probes.json leaked into user.control: ($installed2)"

@@ -1,5 +1,5 @@
 {yants}: let
-  inherit (yants) struct list string attrs option enum int;
+  inherit (yants) struct list string attrs option enum int bool;
 
   limits = struct "limits" {
     memoryMax = option string;
@@ -11,8 +11,13 @@
     periodSeconds = option int;
     timeoutSeconds = option int;
   };
+
+  workspace = struct "workspace" {
+    cwd = option bool;
+    writable = option bool;
+  };
 in {
-  inherit limits readinessProbe;
+  inherit limits readinessProbe workspace;
   service = struct "service" {
     command = list string;
     env = option (attrs string);
@@ -21,5 +26,6 @@ in {
     limits = option limits;
     serviceConfig = option (attrs string);
     readinessProbe = option readinessProbe;
+    workspace = option workspace;
   };
 }

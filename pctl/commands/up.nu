@@ -50,7 +50,7 @@ export def main [
 
   let target = unit-dir $runtime_dir
   mkdir $target
-  install-units $store_tree $runtime_dir $id $host
+  install-units $store_tree $runtime_dir {id: $id, host: $host, path: $project_path}
 
   let manifest = compute-manifest $target $id
 

@@ -4,7 +4,7 @@
 
 | Term              | Definition                                                                                                   | Aliases to avoid        |
 | ----------------- | ------------------------------------------------------------------------------------------------------------ | ----------------------- |
-| **Project**       | A directory whose flake declares a set of services via `pctl.lib.${system}.mkProject`                        | App, workspace          |
+| **Project**       | A directory whose flake declares a set of services via `pctl.lib.${system}.mkProject`                        | App                     |
 | **Project path**  | Absolute path on disk of a project; the sole input to identity derivation                                    | Cwd, dir                |
 | **Spec**          | The declarative Nix expression passed to `mkProject` — a record of named service definitions                 | Config, declaration     |
 | **Service**       | A single long-running process declared by the spec (`command`, `env`, `dependsOn`, `limits`, `serviceConfig`)| Process, daemon         |
@@ -33,7 +33,9 @@
 | **Known marker** | Persistent per-project file at `$XDG_STATE_HOME/pctl/known/<id>` containing the absolute **project path**. Written on `up`, untouched by `down`, survives reboot. The only signal **gc** uses to tell a live project's state from garbage. | —           |
 | **PCTL_ID**      | Env var set in every drop-in exposing the **project id** to the service process                                | —                      |
 | **PCTL_HOST**    | Env var set in service drop-ins exposing the allocated **host** to the service process                         | —                      |
-| **@@PROJECT@@**  | Placeholder token in filenames and unit bodies inside the **store tree**, substituted at install time          | Template, marker       |
+| **@@PROJECT@@**  | Placeholder token in filenames and unit bodies inside the **store tree**, substituted at install time with the **project id** | Template, marker       |
+| **@@PROJECT_PATH@@** | Placeholder token in unit bodies inside the **store tree**, substituted at install time with the **project path**. Internal — emitted by `workspace` rendering; users do not write it directly. | — |
+| **Workspace**    | Per-service spec field `{ cwd?, writable? }` opting into `WorkingDirectory=<project path>` and a `ProtectHome=tmpfs` + `BindPaths=<project path>` write-through. Not the bare word "workspace" as a synonym for project. | —                      |
 | **Worktree**     | A distinct project path (e.g. a git worktree) whose identity-from-path rule guarantees a distinct **project id**, **slice**, and **host** — letting siblings coexist | Copy, clone |
 
 ## Garbage collection

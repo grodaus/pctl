@@ -27,7 +27,7 @@ export def main [
   # Staging: a tmpdir that looks like an XDG_RUNTIME_DIR. install-units writes
   # into $staging/systemd/user.control/.
   let staging = mktemp -d -t pctl-reload-staging-XXXXXX
-  install-units $store_tree $staging $id $host
+  install-units $store_tree $staging {id: $id, host: $host, path: $project_path}
   let staging_unit_dir = unit-dir $staging
   let new_manifest = compute-manifest $staging_unit_dir $id
 

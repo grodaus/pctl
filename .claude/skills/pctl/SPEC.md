@@ -25,6 +25,7 @@ pctl.lib.${system}.mkProject {
 | `restart`       | `"no" \| "on-failure" \| "always" \| "on-abnormal"` | no     | Shortcut for `Restart=`; equivalent to `serviceConfig.Restart`.                        |
 | `limits`        | `{ memoryMax?: string, cpuQuota?: string }`        | no       | `MemoryMax=` and `CPUQuota=`. Strings pass through to systemd (e.g. `"512M"`, `"50%"`). |
 | `serviceConfig` | `attrs<string>`                                    | no       | Raw `[Service]` directives — any key systemd accepts.                                   |
+| `workspace`    | `{ cwd?: bool, writable?: bool }`                  | no       | First-class access to the project directory. See [Workspace](#workspace).              |
 | `readinessProbe`| `{ exec: list<string>, periodSeconds?: int, timeoutSeconds?: int }` | no | Exec probe consulted by `pctl up --wait`. Not rendered into the unit; carried as side-car. |
 
 All strings are passed through verbatim; pctl does not validate values against systemd's accepted vocabulary.
@@ -82,6 +83,29 @@ These are available to the process at exec time:
 - From a systemd directive such as `ExecStart=`, use `${PCTL_HOST}` (systemd specifier). Inside a Nix string literal, escape the `$` so the literal string `${PCTL_HOST}` reaches the unit file: `"\${PCTL_HOST}"`.
 
 Not interchangeable with `@@PROJECT@@`: placeholders are literal-substituted at install, env vars are evaluated at service start.
+
+## Workspace
+
+By default every service runs with `ProtectHome=read-only` + `ProtectSystem=strict`, so the process can read the project directory but can't write to it, and its working directory is whatever systemd picks (usually `/`). `workspace` is a typed shortcut for the two adjustments services commonly need:
+
+```nix
+web = {
+  command = ["${pkgs.buildTool}/bin/build"];
+  workspace = {
+    cwd = true;       # WorkingDirectory=<project path>
+    writable = true;  # bind-mount project dir writable
+  };
+};
+```
+
+| `cwd`  | `writable` | Effect                                                                                                |
+| ------ | ---------- | ----------------------------------------------------------------------------------------------------- |
+| false  | false      | No change (default).                                                                                  |
+| true   | false      | `WorkingDirectory=<path>`. Reads still pass through `ProtectHome=read-only`; writes fail.             |
+| false  | true       | `ProtectHome=tmpfs` + `BindPaths=<path>`. Project dir is writable; the rest of `/home` stays hidden.  |
+| true   | true       | Combine both — the service starts in the project dir and can write to it.                             |
+
+`writable = true` deliberately keeps `ProtectHome=tmpfs` rather than dropping to `ProtectHome=no`: only the project directory is bind-mounted back in, so sibling projects and the rest of `/home` remain invisible to the service. Your own `serviceConfig` still merges last, so you can override any of these if you need different semantics.
 
 ## `readinessProbe`
 

@@ -44,6 +44,19 @@
 
     limits = service.limits or {};
 
+    # ProtectHome=tmpfs + BindPaths is strictly tighter than ProtectHome=no:
+    # only the project dir is bind-mounted back in, so siblings and the rest
+    # of /home stay invisible to the service.
+    workspace = service.workspace or {};
+    workspaceAttrs =
+      lib.optionalAttrs (workspace.cwd or false) {
+        WorkingDirectory = "@@PROJECT_PATH@@";
+      }
+      // lib.optionalAttrs (workspace.writable or false) {
+        ProtectHome = "tmpfs";
+        BindPaths = ["@@PROJECT_PATH@@"];
+      };
+
     serviceSection =
       sandboxDefaults
       // {
@@ -54,6 +67,7 @@
       // lib.optionalAttrs (service ? restart) {Restart = service.restart;}
       // lib.optionalAttrs (limits ? memoryMax) {MemoryMax = limits.memoryMax;}
       // lib.optionalAttrs (limits ? cpuQuota) {CPUQuota = limits.cpuQuota;}
+      // workspaceAttrs
       // (service.serviceConfig or {});
 
     installSection = {WantedBy = targetName;};

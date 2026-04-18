@@ -73,6 +73,20 @@ packages.${system}.pctl = pctl.lib.${system}.mkProject {
 
 Every service receives `PCTL_HOST=127.0.0.N` (allocated per project path) and `PCTL_ID` (the project id) via a systemd drop-in. Reference them as `$PCTL_HOST` in service code, or `${PCTL_HOST}` in systemd unit directives. `@@PROJECT@@` is substituted at install time with the project id.
 
+Need a service to read or write the project directory? Add `workspace`:
+
+```nix
+web = {
+  command = ["${pkgs.buildTool}/bin/build"];
+  workspace = {
+    cwd = true;       # WorkingDirectory=<project path>
+    writable = true;  # bind-mount project dir writable (ProtectHome=tmpfs + BindPaths=)
+  };
+};
+```
+
+`writable = true` keeps the rest of `/home` invisible — only the project dir is bind-mounted back in. See the skill docs for the full semantics.
+
 ## Commands
 
 Setup
