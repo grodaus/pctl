@@ -28,7 +28,7 @@
     } ''
       set -euo pipefail
       got=$(ls "$drv" | sort)
-      want=$(printf 'pctl-@@PROJECT@@-web.service\npctl-@@PROJECT@@.slice\n')
+      want=$(printf 'pctl-@@PROJECT@@-web.service\npctl-@@PROJECT@@.slice\nprobes.json\n')
       if [ "$got" != "$want" ]; then
         echo "FAIL: file listing mismatch"
         echo "got:"
@@ -121,8 +121,55 @@
       mkdir -p "$out"
       cp "$webFile" "$out/"
     '';
+  # CASE 5: readinessProbe is emitted to probes.json side-car; units are unchanged.
+  case5 = let
+    project = plib.mkProject {
+      services = {
+        web = {
+          command = ["/bin/w"];
+          readinessProbe = {
+            exec = ["/bin/true"];
+            periodSeconds = 2;
+            timeoutSeconds = 15;
+          };
+        };
+        db = {command = ["/bin/d"];}; # no probe
+      };
+    };
+    expectedProbes = builtins.toJSON {
+      web = {
+        exec = ["/bin/true"];
+        periodSeconds = 2;
+        timeoutSeconds = 15;
+      };
+    };
+  in
+    pkgs.runCommand "pctl-mkproject-case5"
+    {
+      drv = project;
+      inherit expectedProbes;
+      passAsFile = ["expectedProbes"];
+    } ''
+      set -euo pipefail
+      if [ ! -f "$drv/probes.json" ]; then
+        echo "FAIL: $drv/probes.json missing"
+        ls "$drv"
+        exit 1
+      fi
+      if ! diff -u <(cat "$expectedProbesPath") <(cat "$drv/probes.json"); then
+        echo "FAIL: probes.json mismatch"
+        exit 1
+      fi
+      # Probe must NOT appear in any .service file.
+      if grep -F 'readinessProbe' "$drv"/*.service 2>/dev/null; then
+        echo "FAIL: readinessProbe leaked into a .service unit"
+        exit 1
+      fi
+      mkdir -p "$out"
+      cp "$drv/probes.json" "$out/"
+    '';
 in
   pkgs.symlinkJoin {
     name = "pctl-mkproject-tests";
-    paths = [case1 case2 case3 case4];
+    paths = [case1 case2 case3 case4 case5];
   }

@@ -1,12 +1,18 @@
 {yants}: let
-  inherit (yants) struct list string attrs option enum;
+  inherit (yants) struct list string attrs option enum int;
 
   limits = struct "limits" {
     memoryMax = option string;
     cpuQuota = option string;
   };
+
+  readinessProbe = struct "readinessProbe" {
+    exec = list string;
+    periodSeconds = option int;
+    timeoutSeconds = option int;
+  };
 in {
-  inherit limits;
+  inherit limits readinessProbe;
   service = struct "service" {
     command = list string;
     env = option (attrs string);
@@ -14,5 +20,6 @@ in {
     restart = option (enum "restart" ["no" "on-failure" "always" "on-abnormal"]);
     limits = option limits;
     serviceConfig = option (attrs string);
+    readinessProbe = option readinessProbe;
   };
 }

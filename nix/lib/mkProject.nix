@@ -41,7 +41,18 @@
     contents = sliceText;
   };
 
-  allFiles = [sliceFile] ++ serviceFiles;
+  # Probes are a side-car consumed by `pctl up --wait`, not rendered into any
+  # systemd unit. Shape: { <svcName>: { exec, periodSeconds, timeoutSeconds } }.
+  probes =
+    lib.mapAttrs (_: s: s.readinessProbe)
+    (lib.filterAttrs (_: s: s ? readinessProbe) depsChecked);
+
+  probesFile = {
+    fname = "probes.json";
+    contents = builtins.toJSON probes;
+  };
+
+  allFiles = [sliceFile probesFile] ++ serviceFiles;
 
   envAttrs = lib.listToAttrs (lib.imap0
     (i: f: {

@@ -84,5 +84,27 @@ assert (not (($unitDir | path join "pctl-foo-deadbeef-web.service") | path exist
 assert (not (($unitDir | path join "pctl-foo-deadbeef-web.service.d") | path exists))
 assert (not (($unitDir | path join "pctl-foo-deadbeef.slice.d") | path exists))
 
+# ---- RED6/GREEN6: non-unit side-cars (probes.json) are not installed ----
+# mkProject emits probes.json alongside the slice/service files. install-units
+# must ignore anything that isn't a .slice or .service so the side-car doesn't
+# land in user.control/ as a bogus unit.
+let store2 = $tmpbase | path join "store2"
+let runtime2 = $tmpbase | path join "runtime2"
+setup-store $store2
+'{"web": {"exec": ["/bin/true"], "periodSeconds": 1, "timeoutSeconds": 30}}'
+  | save -f ($store2 | path join "probes.json")
+
+let result2 = install-units $store2 $runtime2 "bar-cafebabe" "127.0.0.43"
+let unitDir2 = $runtime2 | path join "systemd/user.control"
+let installed2 = ls $unitDir2 | get name | each { path basename } | sort
+assert (not ("probes.json" in $installed2)) $"probes.json leaked into user.control: ($installed2)"
+assert (not (($unitDir2 | path join "probes.json.d") | path exists)) "bogus drop-in dir created for probes.json"
+# The two real units are still there.
+assert ("pctl-bar-cafebabe.slice" in $installed2)
+assert ("pctl-bar-cafebabe-web.service" in $installed2)
+# The returned record should also be filtered.
+let returned_bases = $result2.installed | each { path basename }
+assert (not ("probes.json" in $returned_bases))
+
 # cleanup
 rm -rf $tmpbase

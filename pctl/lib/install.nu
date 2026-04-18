@@ -9,8 +9,15 @@ export def install-units [
   let target = unit-dir $runtime_dir
   mkdir $target
 
+  # Only .slice/.service files are systemd units. Anything else in the store
+  # tree (e.g. probes.json side-car from mkProject) must not land in
+  # user.control/ or get a drop-in — systemd would try to load it and fail.
   let results = ls $store_tree
     | get name
+    | where { |p|
+      let b = $p | path basename
+      ($b | str ends-with ".slice") or ($b | str ends-with ".service")
+    }
     | each { |p|
       let base = $p | path basename
       let target_base = $base | str replace -a '@@PROJECT@@' $project_id
