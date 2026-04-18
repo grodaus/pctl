@@ -71,8 +71,33 @@ export def setup [services: record = {web: null}]: nothing -> record {
 
 # Best-effort teardown. Never throws — designed to be called in an `always`
 # pattern so a failing assertion doesn't strand services.
+#
+# Beyond `pctl down`, teardown also scrubs anything the test wrote under
+# `$XDG_STATE_HOME`: the known-marker `pctl up` persists, and any state
+# directories systemd created from `StateDirectory=` on service units
+# (postgres fixtures do this, ~11MB per run). Without that scrub every
+# pg e2e run leaks real disk until someone runs `pctl gc`.
 export def teardown [scratch: record] {
   try { run-pctl $scratch.project_dir "down" "--quiet" | ignore }
+  try {
+    use ../../pctl/lib/identity.nu derive-id
+    use ../../pctl/lib/gc.nu state-home
+    use ../../pctl/lib/known.nu known-path
+    let id = (derive-id $scratch.project_dir).id
+    let sh = state-home
+    let marker = known-path $sh $id
+    if ($marker | path exists) { rm -f $marker }
+    # Sweep every `pctl-<id>-*` state dir this test's services may have made.
+    let prefix = $"pctl-($id)-"
+    if ($sh | path exists) {
+      ls $sh
+        | where type == dir
+        | get name
+        | where { |p| ($p | path basename) | str starts-with $prefix }
+        | each { |p| rm -rf $p }
+        | ignore
+    }
+  }
   try { rm -rf $scratch.tmp }
 }
 
@@ -108,22 +133,38 @@ export def unit-path [basename: string]: nothing -> string {
 # run.nu at suite start so a failed test doesn't poison subsequent ones.
 export def cleanup-stragglers [] {
   let r = ^systemctl --user list-units --type=slice --all --no-legend --plain | complete
-  if $r.exit_code != 0 { return }
-  let slices = $r.stdout
-    | lines
-    | each { |l| $l | split row -r '\s+' | get 0 }
-    | where { |s| $s | str starts-with "pctl-" }
-  for s in $slices {
-    let id = $s | str replace -r '^pctl-' '' | str replace -r '\.slice$' ''
-    let reg_dir = $env.XDG_RUNTIME_DIR | path join "pctl" "projects" $id
-    if not ($reg_dir | path exists) { continue }
-    let path_file = $reg_dir | path join "path"
-    if not ($path_file | path exists) { continue }
-    let orig_path = open --raw $path_file | str trim
-    let is_e2e = ($orig_path | path basename) == "project" and ($orig_path | path dirname | path basename | str starts-with "pctl-e2e-")
-    if $is_e2e {
-      print $"straggler: ($s) from ($orig_path) — cleaning"
-      try { run-pctl $orig_path "down" "--quiet" | ignore }
+  if $r.exit_code == 0 {
+    let slices = $r.stdout
+      | lines
+      | each { |l| $l | split row -r '\s+' | get 0 }
+      | where { |s| $s | str starts-with "pctl-" }
+    for s in $slices {
+      let id = $s | str replace -r '^pctl-' '' | str replace -r '\.slice$' ''
+      let reg_dir = $env.XDG_RUNTIME_DIR | path join "pctl" "projects" $id
+      if not ($reg_dir | path exists) { continue }
+      let path_file = $reg_dir | path join "path"
+      if not ($path_file | path exists) { continue }
+      let orig_path = open --raw $path_file | str trim
+      let is_e2e = ($orig_path | path basename) == "project" and ($orig_path | path dirname | path basename | str starts-with "pctl-e2e-")
+      if $is_e2e {
+        print $"straggler: ($s) from ($orig_path) — cleaning"
+        try { run-pctl $orig_path "down" "--quiet" | ignore }
+      }
+    }
+  }
+
+  # Sweep stale known-markers left by crashed e2e runs: any marker whose path
+  # points at a removed pctl-e2e-* tmpdir is ours and safe to drop. Keeps
+  # pctl gc's "unknown"/"orphan" counts honest across subsequent runs.
+  use ../../pctl/lib/gc.nu state-home
+  use ../../pctl/lib/known.nu [known-list known-path]
+  let known = try { known-list (state-home) } catch { [] }
+  for k in $known {
+    let is_e2e = ($k.path | path basename) == "project" and ($k.path | path dirname | path basename | str starts-with "pctl-e2e-")
+    if $is_e2e and (not ($k.path | path exists)) {
+      let marker = known-path (state-home) $k.id
+      print $"straggler: marker ($marker) from ($k.path) — removing"
+      try { rm -f $marker }
     }
   }
 }
