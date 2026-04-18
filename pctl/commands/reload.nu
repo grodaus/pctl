@@ -79,6 +79,7 @@ export def main [
     host: $host
     manifest: $new_manifest
     started_at: $reg.started_at
+    store_tree: $store_tree
   }
 
   rm -rf $staging

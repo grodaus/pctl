@@ -10,6 +10,7 @@ use commands/logs.nu
 use commands/list.nu
 use commands/host.nu
 use commands/gc.nu
+use commands/results.nu
 use lib/fmt.nu format-out
 
 # pctl — declarative Nix spec → systemd --user units.
@@ -104,6 +105,17 @@ def "main host" [
   --path: string   # override project path (default: cwd)
 ] {
   host --path $path
+}
+
+# Block until every service is terminal, then print one row per service
+# (state, elapsed, name). Exit 0 iff every service ended in 'active'.
+def "main results" [
+  --timeout: int = 600   # overall timeout in seconds
+  --json                 # emit JSON list of records
+  --path: string         # override project path (default: cwd)
+  --quiet
+] {
+  results --timeout $timeout --json=$json --path $path --quiet=$quiet
 }
 
 # Report (default) or delete (--yes) orphan state directories under

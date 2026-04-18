@@ -9,15 +9,27 @@ export def registry-write [runtime_dir: string, id: string, record: record] {
   $record.host | save -f ($dir | path join "host")
   $record.manifest | to nuon | save -f ($dir | path join "manifest.nuon")
   $record.started_at | save -f ($dir | path join "started_at")
+  # store_tree: path to the rendered unit tree (store path for `nix build`,
+  # tmpdir for `--tree`). Persisted so `pctl results` can re-read probes.json
+  # without rebuilding. Absent in legacy entries; registry-read returns "" then.
+  let store_tree = $record | get -o store_tree | default ""
+  $store_tree | save -f ($dir | path join "store_tree")
 }
 
 export def registry-read [runtime_dir: string, id: string]: nothing -> record {
   let dir = registry-path $runtime_dir $id
+  let store_tree_file = $dir | path join "store_tree"
+  let store_tree = if ($store_tree_file | path exists) {
+    open --raw $store_tree_file | str trim
+  } else {
+    ""
+  }
   {
     path: (open --raw ($dir | path join "path") | str trim)
     host: (open --raw ($dir | path join "host") | str trim)
     manifest: (open ($dir | path join "manifest.nuon"))
     started_at: (open --raw ($dir | path join "started_at") | str trim)
+    store_tree: $store_tree
   }
 }
 

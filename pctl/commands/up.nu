@@ -64,6 +64,7 @@ export def main [
     host: $host
     manifest: $manifest
     started_at: $started_at
+    store_tree: $store_tree
   }
 
   # Persistent marker — survives `down` and reboot; `pctl gc` reads it to
