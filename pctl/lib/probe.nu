@@ -73,7 +73,14 @@ export def wait-ready [
     if ($probe | is-empty) {
       let unit = $"pctl-($id)-($svc).service"
       if not (wait-active-unit $unit $remaining) {
-        error make { msg: $"pctl up --wait: service ($svc) did not become active within ($overall_timeout)" }
+        # Distinguish terminal-failure (e.g. oneshot exited non-zero) from
+        # genuine timeout: re-read the state so the message names it.
+        let final_state = unit-state $unit
+        if $final_state in ["failed" "inactive"] {
+          error make { msg: $"pctl up --wait: service ($svc) terminated in state '($final_state)' \(expected 'active'\)" }
+        } else {
+          error make { msg: $"pctl up --wait: service ($svc) did not become active within ($overall_timeout) \(last state: '($final_state)'\)" }
+        }
       }
     } else {
       let period = (($probe | get -o periodSeconds | default 1) * 1sec)
@@ -86,20 +93,37 @@ export def wait-ready [
   }
 }
 
-# Poll systemctl --user is-active until the unit is active or timeout elapses.
-# Lives here (not sysctl.nu) to keep the probe module self-contained.
+# Read the current is-active state of $unit as a string ("active",
+# "activating", "inactive", "failed", ...). `systemctl is-active` exits
+# non-zero for any non-active state but still prints the state to stdout; we
+# use `complete` (wrapped in `do -i` to bypass pipefail) so we can read stdout
+# regardless of exit code. If the call itself explodes the state is reported
+# as "unknown" so callers never crash on a probe read.
+def unit-state [unit: string]: nothing -> string {
+  let bin = $env.PCTL_SYSTEMCTL? | default "systemctl"
+  let r = do -i { ^$bin --user is-active $unit | complete }
+  let state = $r.stdout | str trim
+  if ($state | is-empty) { "unknown" } else { $state }
+}
+
+# Poll unit-state until the unit is active, reaches a terminal failure state,
+# or the timeout elapses. Lives here (not sysctl.nu) to keep the probe module
+# self-contained.
+#
+# Terminal states:
+#   - "active"            → success (return true)
+#   - "failed"            → oneshot exited non-zero, simple crashed, etc.
+#   - "inactive"          → oneshot without RemainAfterExit that finished, or
+#                           a unit that was never started. pctl's services set
+#                           RemainAfterExit=yes so "inactive" here means the
+#                           unit never activated — treat as terminal failure.
+# Transient states (keep polling): "activating", "reloading", "deactivating".
 def wait-active-unit [unit: string, timeout: duration] {
   let deadline = (date now) + $timeout
-  let bin = $env.PCTL_SYSTEMCTL? | default "systemctl"
   loop {
-    # is-active exits non-zero when the unit isn't active; under pipefail the
-    # pipeline errors, so treat a failed call as "not yet active" and keep polling.
-    let state = try {
-      ^$bin --user is-active $unit | str trim
-    } catch {
-      "inactive"
-    }
+    let state = unit-state $unit
     if $state == "active" { return true }
+    if $state in ["failed" "inactive"] { return false }
     if (date now) >= $deadline { return false }
     sleep 100ms
   }
