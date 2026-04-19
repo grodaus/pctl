@@ -25,6 +25,7 @@ let () =
               ("ProtectSystem", "strict");
             ];
           workspace = Some (true, true);
+          probe = None;
         }
       in
       Harness.with_scratch ~services:[ writer ]

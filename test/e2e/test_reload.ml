@@ -37,6 +37,7 @@ let () =
               ("Description", "web-v2 @@PROJECT@@");
             ];
           workspace = None;
+          probe = None;
         }
       in
       let db_service = Harness.service "db" in

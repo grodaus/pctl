@@ -31,21 +31,24 @@ let nix_arg =
 let up_cmd =
   let no_block =
     let doc =
-      "Enqueue all service starts in one batch and return immediately. \
-       Phase 4 ignores this flag beyond accepting it."
+      "Skip the readiness wait and return immediately after the systemd \
+       start calls. Append '(async)' to the status line."
     in
     Arg.(value & flag & info [ "no-block" ] ~doc)
   in
   let wait =
     let doc =
-      "Block until every service is ready. Phase 4 stub; readiness wait \
-       lands in Phase 5."
+      "Block until every service is ready (readinessProbe exits 0 or the \
+       unit reaches active), bounded by --timeout."
     in
     Arg.(value & flag & info [ "wait" ] ~doc)
   in
   let timeout =
-    let doc = "Overall readiness timeout in seconds." in
-    Arg.(value & opt int 30 & info [ "timeout" ] ~docv:"SECS" ~doc)
+    let doc =
+      "Overall --wait readiness timeout in seconds (shared across every \
+       service)."
+    in
+    Arg.(value & opt int 300 & info [ "timeout" ] ~docv:"SECS" ~doc)
   in
   let run path tree nix no_block wait timeout =
     Eio_main.run @@ fun env ->
@@ -79,6 +82,41 @@ let down_cmd =
   let info = Cmd.info "down" ~doc:"Stop the slice, uninstall units." in
   Cmd.v info Term.(const run $ path_arg)
 
+(* ---- results --------------------------------------------------- *)
+
+let results_cmd =
+  let timeout =
+    let doc = "Overall readiness timeout in seconds." in
+    Arg.(value & opt int 600 & info [ "timeout" ] ~docv:"SECS" ~doc)
+  in
+  let json =
+    let doc = "Emit JSON list of result records." in
+    Arg.(value & flag & info [ "json" ] ~doc)
+  in
+  let run path timeout json =
+    Eio_main.run @@ fun env ->
+    Eio.Switch.run @@ fun sw ->
+    Cli.Results.run ~sw ~env ?path ~timeout ~json ()
+  in
+  let info =
+    Cmd.info "results"
+      ~doc:"Block until every service is terminal, then report outcomes."
+  in
+  Cmd.v info Term.(const run $ path_arg $ timeout $ json)
+
+(* ---- host ------------------------------------------------------ *)
+
+let host_cmd =
+  let run path =
+    Eio_main.run @@ fun env ->
+    Eio.Switch.run @@ fun sw -> Cli.Host.run ~sw ~env ?path ()
+  in
+  let info =
+    Cmd.info "host"
+      ~doc:"Print the project's allocated 127.0.0.N on stdout."
+  in
+  Cmd.v info Term.(const run $ path_arg)
+
 (* ---- restart --------------------------------------------------- *)
 
 let restart_cmd =
@@ -96,12 +134,14 @@ let restart_cmd =
 (* ---- default (no subcommand) ----------------------------------- *)
 
 let default_cmd () =
-  print_endline "pctl: a subcommand is required. Try: pctl up | reload | down | restart";
+  print_endline
+    "pctl: a subcommand is required. Try: pctl up | reload | down | \
+     restart | results | host";
   1
 
 let root =
   let info = Cmd.info "pctl" ~version ~doc:"declarative Nix spec -> systemd --user units" in
   Cmd.group info ~default:Term.(const default_cmd $ const ())
-    [ up_cmd; reload_cmd; down_cmd; restart_cmd ]
+    [ up_cmd; reload_cmd; down_cmd; restart_cmd; results_cmd; host_cmd ]
 
 let () = exit (Cmd.eval' root)

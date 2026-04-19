@@ -85,6 +85,11 @@
             cmdliner
             logs
             digestif
+            # mtime — Phase 5 Probe module uses Mtime.span / Mtime.add_span
+            # to compute per-fiber elapsed nanoseconds and per-service
+            # deadlines. Eio depends on mtime already, but we list it
+            # explicitly so `Mtime` is exposed to pctl's linking set.
+            mtime
           ];
 
           # `ocaml-build` in `checks` below builds without tests to keep the

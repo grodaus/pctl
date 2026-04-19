@@ -21,6 +21,8 @@ open Common
 
 module Plan_dbus = Plan.Make (Systemctl.Dbus)
 module Plan_in_mem = Plan.Make (Systemctl.In_mem)
+module Probe_dbus = Probe.Make (Systemctl.Dbus)
+module Probe_in_mem = Probe.Make (Systemctl.In_mem)
 
 (* Pluggable Systemctl for tests. Set via [set_systemctl_override]. When
  * None, Up.run uses Systemctl.Dbus. Phase 4 e2e tests that want an
@@ -42,9 +44,40 @@ let apply_plan ~env ~sw ~rows =
       Plan_dbus.apply ~handle:t ~rows
   | Fake_in_mem t -> Plan_in_mem.apply ~handle:t ~rows
 
+(* Scope the Dbus connection to an INNER Switch so the dispatch fiber
+ * (spawned by subscribe_unit_changes) gets cancelled and drained
+ * inside an Eio-handled context, before control returns to the caller's
+ * outer Switch. Otherwise a late PropertiesChanged signal can trigger
+ * Eio.Fiber.fork on a closing switch and leak
+ * Effect.Unhandled(Cancel.Get_context). *)
+let run_wait_ready ~env ~sw:_ ~id ~host ~spec ~timeout_seconds : unit =
+  match !systemctl_choice with
+  | Real_dbus ->
+      Eio.Switch.run @@ fun inner_sw ->
+      let t = Systemctl.Dbus.connect ~sw:inner_sw env in
+      let _rows =
+        Probe_dbus.wait_all ~sw:inner_sw ~env ~handle:t ~id ~host ~spec
+          ~timeout_seconds ~strategy:`Throw_first
+      in
+      (* Explicit close halts the background dispatch fiber before the
+       * inner switch's release kicks in — belt-and-braces with the
+       * scope isolation above. *)
+      Systemctl.Dbus.close t
+  | Fake_in_mem t ->
+      Eio.Switch.run @@ fun inner_sw ->
+      let _rows =
+        Probe_in_mem.wait_all ~sw:inner_sw ~env ~handle:t ~id ~host ~spec
+          ~timeout_seconds ~strategy:`Throw_first
+      in
+      ()
+
 let run ~sw ~env ?tree ?nix ?path ?(no_block = false) ?(wait = false)
-    ?timeout:_ () : int =
-  ignore no_block;
+    ?(timeout = 300) () : int =
+  (* Phase 5 note: the plan brief asked for --no-block AND --wait to
+   * reject with exit 2, but the Nushell oracle (pctl/commands/up.nu)
+   * explicitly allows the combination ("enqueue async + then wait-ready").
+   * No existing e2e test pins either behaviour; we match the oracle to
+   * keep tuor's surface identical. Surfaced in the Phase 5 report. *)
   run_with_errors (fun () ->
       let project_path = resolve_path path in
       let spec_path_v =
@@ -93,12 +126,12 @@ let run ~sw ~env ?tree ?nix ?path ?(no_block = false) ?(wait = false)
           let rows = State.Manifest.diff ~before:old_manifest ~after:new_manifest in
           apply_plan ~env ~sw ~rows;
           let unit_count = List.length new_manifest in
-          Printf.printf "project %s up · %d units · host=%s\n"
+          let suffix = if no_block then " (async)" else "" in
+          Printf.printf "project %s up · %d units · host=%s%s\n"
             (Schema.Project_id.to_string id)
             unit_count
-            (Schema.Host.to_string host);
+            (Schema.Host.to_string host)
+            suffix;
           if wait then
-            (* Phase 5 will implement this; for Phase 4 --wait is a stub. *)
-            prerr_endline
-              "pctl: --wait is a Phase-5 stub; readiness wait not yet \
-               implemented"))
+            run_wait_ready ~env ~sw ~id ~host ~spec
+              ~timeout_seconds:timeout))

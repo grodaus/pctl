@@ -616,8 +616,14 @@ let match_rule =
 let install_match_rule_and_fiber t =
   (* Handler called by libsystemd from the dispatch fiber when any
    * matching signal arrives. Look up every subscriber, re-resolve
-   * their current unit state, fire each callback. We ignore the
-   * message body and sender error out-arg. *)
+   * their current unit state, fire each callback synchronously.
+   *
+   * We do NOT [Fiber.fork] here: the handler runs during the dispatch
+   * loop's [sd_bus_process] call, and [Fiber.fork] performs an Eio
+   * effect that requires a live cancellation context. On the last
+   * signal before switch teardown that context may already be
+   * releasing, raising Effect.Unhandled. Phase 5 callbacks (Probe.cb)
+   * do only `ref := true; Promise.resolve` — cheap; safe to run inline. *)
   let handler _msg _ud _err =
     let subs = !(t.subscribers) in
     List.iter
@@ -625,8 +631,7 @@ let install_match_rule_and_fiber t =
         let s =
           (!safe_unit_state_forward) t ~unit:entry.unit_name
         in
-        Eio.Fiber.fork ~sw:t.sw (fun () ->
-            try entry.cb s with _ -> ()))
+        try entry.cb s with _ -> ())
       subs;
     0
   in

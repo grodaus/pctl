@@ -57,15 +57,23 @@ let default_service_config () =
     ("Slice", "pctl-@@PROJECT@@.slice");
   ]
 
+type probe_fixture = {
+  exec : string list;
+  period_seconds : int;
+  timeout_seconds : int;
+}
+
 type service_fixture = {
   name : string;
   service_config : (string * string) list;
   workspace : (bool * bool) option;
       (* (cwd, writable) — None = default false/false *)
+  probe : probe_fixture option;
 }
 
-let service ?(workspace = None) ?(cfg = default_service_config ()) name =
-  { name; service_config = cfg; workspace }
+let service ?(workspace = None) ?(cfg = default_service_config ())
+    ?(probe = None) name =
+  { name; service_config = cfg; workspace; probe }
 
 (* Build spec.json JSON from a set of services. `slice_config` is
  * optional and almost always empty for tests. *)
@@ -98,9 +106,21 @@ let spec_json ~(services : service_fixture list) : string =
       | Some (cwd, w) ->
           Printf.sprintf "{\"cwd\":%b,\"writable\":%b}" cwd w
     in
+    let probe_s =
+      match sf.probe with
+      | None -> "null"
+      | Some p ->
+          let items =
+            String.concat ","
+              (List.map (fun s -> Printf.sprintf "\"%s\"" (escape s)) p.exec)
+          in
+          Printf.sprintf
+            "{\"exec\":[%s],\"period_seconds\":%d,\"timeout_seconds\":%d}"
+            items p.period_seconds p.timeout_seconds
+    in
     Printf.sprintf
-      "\"%s\":{\"depends_on\":[],\"kind\":\"simple\",\"probe\":null,\"service_config\":{%s},\"unit_filename\":\"pctl-@@PROJECT@@-%s.service\",\"workspace\":%s}"
-      sf.name sc sf.name ws
+      "\"%s\":{\"depends_on\":[],\"kind\":\"simple\",\"probe\":%s,\"service_config\":{%s},\"unit_filename\":\"pctl-@@PROJECT@@-%s.service\",\"workspace\":%s}"
+      sf.name probe_s sc sf.name ws
   in
   let services_block =
     String.concat "," (List.map service_json services)
@@ -233,6 +253,61 @@ let up ~scratch =
   Eio_main.run @@ fun env ->
   Eio.Switch.run @@ fun sw ->
   Cli.Up.run ~sw ~env ~tree:scratch.spec_path ~path:scratch.project_dir ()
+
+let up_wait ?(timeout = 30) ~scratch () =
+  Eio_main.run @@ fun env ->
+  Eio.Switch.run @@ fun sw ->
+  Cli.Up.run ~sw ~env ~tree:scratch.spec_path ~path:scratch.project_dir
+    ~wait:true ~timeout ()
+
+let up_no_block ~scratch =
+  Eio_main.run @@ fun env ->
+  Eio.Switch.run @@ fun sw ->
+  Cli.Up.run ~sw ~env ~tree:scratch.spec_path ~path:scratch.project_dir
+    ~no_block:true ()
+
+(* Results/host — capture stdout so tests can inspect JSON / the printed
+ * host line. Both reuse the project path baked into [scratch]. *)
+
+let with_captured_stdout (f : unit -> 'a) : 'a * string =
+  let tmp = Filename.temp_file "pctl-e2e-stdout" ".log" in
+  let fd = Unix.openfile tmp [ Unix.O_WRONLY; Unix.O_TRUNC ] 0o600 in
+  let saved = Unix.dup Unix.stdout in
+  flush Stdlib.stdout;
+  Unix.dup2 fd Unix.stdout;
+  Unix.close fd;
+  let restore () =
+    flush Stdlib.stdout;
+    Unix.dup2 saved Unix.stdout;
+    Unix.close saved
+  in
+  let result =
+    try
+      let r = f () in
+      restore ();
+      r
+    with e ->
+      restore ();
+      raise e
+  in
+  let ic = open_in tmp in
+  let n = in_channel_length ic in
+  let captured = really_input_string ic n in
+  close_in ic;
+  (try Sys.remove tmp with _ -> ());
+  (result, captured)
+
+let results ?(timeout = 30) ?(json = false) ~scratch () : int * string =
+  with_captured_stdout (fun () ->
+      Eio_main.run @@ fun env ->
+      Eio.Switch.run @@ fun sw ->
+      Cli.Results.run ~sw ~env ~path:scratch.project_dir ~timeout ~json ())
+
+let host ~scratch : int * string =
+  with_captured_stdout (fun () ->
+      Eio_main.run @@ fun env ->
+      Eio.Switch.run @@ fun sw ->
+      Cli.Host.run ~sw ~env ~path:scratch.project_dir ())
 
 let reload ~scratch =
   Eio_main.run @@ fun env ->

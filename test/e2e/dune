@@ -23,13 +23,17 @@
 
 (executables
  (names test_up test_up_idempotent test_reload test_down test_worktree
-        test_workspace)
+        test_workspace test_wait_active test_wait_probe test_wait_timeout
+        test_results test_host test_up_no_block test_up_no_wait
+        test_results_tuor_parity)
  (modules test_up test_up_idempotent test_reload test_down test_worktree
-          test_workspace)
- (libraries e2e_harness schema identity install cli state systemctl eio
-            eio_main eio.unix alcotest unix))
+          test_workspace test_wait_active test_wait_probe test_wait_timeout
+          test_results test_host test_up_no_block test_up_no_wait
+          test_results_tuor_parity)
+ (libraries e2e_harness schema identity install cli state systemctl yojson
+            str eio eio_main eio.unix alcotest unix))
 
-; IMPORTANT: all six tests run against the SAME systemd --user session.
+; IMPORTANT: all tests run against the SAME systemd --user session.
 ; Dune parallelises alias dependencies by default, which would cause
 ; races (one test's install step clobbering another's; all tests see
 ; the same XDG_RUNTIME_DIR). We collapse them into ONE rule whose action
@@ -39,7 +43,10 @@
 (rule
  (alias e2e)
  (deps test_dbus_smoke.exe test_up.exe test_up_idempotent.exe
-       test_reload.exe test_down.exe test_worktree.exe test_workspace.exe)
+       test_reload.exe test_down.exe test_worktree.exe test_workspace.exe
+       test_wait_active.exe test_wait_probe.exe test_wait_timeout.exe
+       test_results.exe test_host.exe test_up_no_block.exe
+       test_up_no_wait.exe test_results_tuor_parity.exe)
  (action
   (progn
    (run ./test_dbus_smoke.exe)
@@ -48,4 +55,12 @@
    (run ./test_reload.exe)
    (run ./test_down.exe)
    (run ./test_worktree.exe)
-   (run ./test_workspace.exe))))
+   (run ./test_workspace.exe)
+   (run ./test_wait_active.exe)
+   (run ./test_wait_probe.exe)
+   (run ./test_wait_timeout.exe)
+   (run ./test_results.exe)
+   (run ./test_host.exe)
+   (run ./test_up_no_block.exe)
+   (run ./test_up_no_wait.exe)
+   (run ./test_results_tuor_parity.exe))))
