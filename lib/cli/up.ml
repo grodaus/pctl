@@ -1,6 +1,6 @@
 (* Up — install units and start the project slice + services.
  *
- * Flow (per Phase 4 brief):
+ * Flow:
  *   1. Resolve project path.
  *   2. Open DB, run migration, session-reset.
  *   3. Load spec.json (via nix build, or --tree).
@@ -10,7 +10,7 @@
  *   7. Diff against previous manifest (empty if first run).
  *   8. Connect to Systemctl. Plan.apply — start Added/Changed, stop
  *      Removed, daemon_reload once.
- *   9. Print status line; --wait is a Phase 5 stub.
+ *   9. Print status line; if --wait, block on Probe.wait_all.
  *
  * Stdout contract:
  *   "project <id> up · <n> units · host=<h>" (mirrors Nushell).
@@ -26,10 +26,9 @@ module Probe_in_mem = Probe.Make (Systemctl.In_mem)
 module Gc_dbus = Gc.Make (Systemctl.Dbus)
 module Gc_in_mem = Gc.Make (Systemctl.In_mem)
 
-(* Pluggable Systemctl for tests. Set via [set_systemctl_override]. When
- * None, Up.run uses Systemctl.Dbus. Phase 4 e2e tests that want an
- * in-memory systemctl (instead of real systemd) flip this before each
- * run. Production always runs with None. *)
+(* Pluggable Systemctl for tests. Production always uses Real_dbus; e2e
+ * tests that want an in-memory systemctl (instead of real systemd)
+ * flip this via [set_in_mem_systemctl] before each run. *)
 type systemctl_choice =
   | Real_dbus
   | Fake_in_mem of Systemctl.In_mem.t
@@ -84,11 +83,11 @@ let run_wait_ready ~env ~sw:_ ~id ~host ~spec ~timeout_seconds : unit =
 
 let run ~sw ~env ?tree ?nix ?path ?(no_block = false) ?(wait = false)
     ?(timeout = 300) () : int =
-  (* Phase 5 note: the plan brief asked for --no-block AND --wait to
-   * reject with exit 2, but the prior Nushell `up` oracle
-   * explicitly allowed the combination ("enqueue async + then wait-ready").
-   * No existing e2e test pins either behaviour; we match the oracle to
-   * keep tuor's surface identical. Surfaced in the Phase 5 report. *)
+  if no_block && wait then begin
+    prerr_endline "pctl up: --no-block and --wait are mutually exclusive";
+    2
+  end
+  else
   run_with_errors (fun () ->
       let project_path = resolve_path path in
       let spec_path_v =

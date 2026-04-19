@@ -4,24 +4,21 @@
  * [connect] means importing this module is cheap: unit tests that
  * only touch [In_mem] can link without libsystemd on the loader path.
  *
- * Concurrency model — chosen for simplicity in Phase 3:
+ * Concurrency model:
  *   - Synchronous [sd_bus_call_method] calls block the Eio domain
- *     during the RPC. This is fine for a single-shot CLI: no other
- *     fiber needs progress while we're doing one RPC.
+ *     during the RPC. Fine for a single-shot CLI: no other fiber
+ *     needs progress while we're doing one RPC.
  *   - Subscription dispatch runs in a dedicated background fiber that
  *     alternates [sd_bus_process] (non-blocking drain) and
  *     [sd_bus_wait] with a 100 ms timeout. Eio preempts that fiber
- *     cooperatively. We do NOT integrate the bus fd into Eio's epoll
- *     loop in Phase 3 — documented as a Phase 5+ option in the plan's
- *     "Risks" section.
+ *     cooperatively. The bus fd is not integrated into Eio's epoll
+ *     loop — that's a latency knob worth ~50 ms in the worst case,
+ *     acceptable for pctl's use.
  *
  * Memory lifecycle — every allocating FFI call is wrapped in a
  *   [Fun.protect] so unref/free runs on both success and failure
  *   paths. The bus handle itself is tracked by [Gc.finalise] as a
  *   belt-and-braces; callers should prefer explicit [close].
- *
- * Plan binding: docs/src/plans/20260419-ocaml-rewrite.md
- *   § "Systemctl port" and "Phase 3 — Systemctl port + dbus adapter".
  *)
 
 module C = Ctypes
@@ -597,10 +594,10 @@ let () =
  *     dispatch fiber. Subsequent calls only append to the subscriber
  *     list.
  *
- * Limitations (OK for Phase 3 exit criteria — Phase 5 will tune):
+ * Known limitations:
  *   - No deduplication of "state didn't change" signals: if a
  *     subscriber is racy the callback may fire multiple times with
- *     the same state. Phase 5's probe.ml is responsible for filtering.
+ *     the same state. probe.ml filters on the consumer side.
  *   - No per-unit subscriber removal.
  *
  * Memory lifecycle:
@@ -622,8 +619,8 @@ let install_match_rule_and_fiber t =
    * loop's [sd_bus_process] call, and [Fiber.fork] performs an Eio
    * effect that requires a live cancellation context. On the last
    * signal before switch teardown that context may already be
-   * releasing, raising Effect.Unhandled. Phase 5 callbacks (Probe.cb)
-   * do only `ref := true; Promise.resolve` — cheap; safe to run inline. *)
+   * releasing, raising Effect.Unhandled. The probe.ml callback does
+   * only `ref := true; Promise.resolve` — cheap; safe to run inline. *)
   let handler _msg _ud _err =
     let subs = !(t.subscribers) in
     List.iter

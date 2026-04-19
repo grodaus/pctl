@@ -1,4 +1,4 @@
-(* Phase 3 unit suite — property-style tests over [Systemctl.In_mem].
+(* Property-style tests over [Systemctl.In_mem].
  *
  * Every test drives Eio via a local [eio_run] helper (same pattern as
  * test/integration/test_state.ml). Subscribers fire on forked fibers,
@@ -176,7 +176,7 @@ let test_idempotent_start () =
     "no transitions when already Active" [] (List.rev !obs)
 
 let () =
-  Alcotest.run "pctl phase3 systemctl/in_mem"
+  Alcotest.run "pctl systemctl/in_mem"
     [
       ( "in_mem",
         [

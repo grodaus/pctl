@@ -1,8 +1,8 @@
 (* Project identity — ported from the prior Nushell `derive-id` and
  * `allocate-host`. The Nushell implementation is the behavioural
  * oracle; the OCaml port must produce byte-identical ids and hosts for
- * every path so the binaries swap cleanly. See test/unit for fixture-
- * parity anchors. *)
+ * every path so the binaries swap cleanly. See test/unit/test_identity.ml
+ * for fixture-parity anchors. *)
 
 open Schema
 

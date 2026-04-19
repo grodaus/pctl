@@ -8,10 +8,9 @@
  * "pctl status foo" for a stopped foo should still be observable rather
  * than a hard failure.
  *
- * The task brief asked for `--json`/`--table` modes and "exit 0 iff at
- * least one unit Active" — the Nushell oracle supports neither of those.
- * We follow the Nushell oracle for byte-for-byte parity. Flagged in the
- * Phase 6 report.
+ * No --json/--table modes and no "exit 0 iff at least one unit Active"
+ * check — the Nushell oracle supports neither and we follow the oracle
+ * for byte-for-byte parity. A future pctl version could layer those on.
  *
  * If [svc] is empty, target the slice (pctl-<id>.slice). Otherwise target
  * the service (pctl-<id>-<svc>.service). Mirrors the Nushell `unit-for`

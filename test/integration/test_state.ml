@@ -232,7 +232,7 @@ let test_foreign_keys_cascade () =
 (* ---------------------------------------------------------------- *)
 
 let () =
-  Alcotest.run "pctl phase2"
+  Alcotest.run "pctl state"
     [
       ( "state",
         [

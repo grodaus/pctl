@@ -1,4 +1,4 @@
-; pctl binary. Phase 4 wires the per-command dispatcher via `cli`.
+; pctl binary — cmdliner dispatch over the `cli` library.
 ; libsystemd is pulled in transitively by `systemctl` so DT_NEEDED is
 ; satisfied.
 (executable

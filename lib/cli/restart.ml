@@ -1,13 +1,10 @@
 (* Restart — restart a single service (or the slice if svc = "").
  *
  * Oracle: the prior Nushell `restart` command. The filename for a service is
- * pctl-<id>-<svc>.service; if svc is empty (i.e. caller didn't pass one),
- * the restart targets pctl-<id>.slice — mirrors Nushell `unit-for`.
- *
- * Phase 4 brief signature takes `~svc:string` (required). We accept an
- * empty string as "restart the slice" so the cmdliner layer can emit a
- * clean `pctl restart` (no arg) that bounces the slice. Phase 5+ can
- * split if needed. *)
+ * pctl-<id>-<svc>.service; if svc is empty (caller didn't pass one), the
+ * restart targets pctl-<id>.slice — mirrors Nushell `unit-for`. The
+ * empty-string sentinel lets cmdliner emit a clean `pctl restart` (no
+ * arg) that bounces the slice. *)
 
 open Common
 module Gc_dbus = Gc.Make (Systemctl.Dbus)

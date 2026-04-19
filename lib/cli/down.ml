@@ -4,10 +4,10 @@
  *   1. Stop the project slice (systemd cascades to every service under it).
  *   2. Delete unit files and their drop-in dirs.
  *   3. daemon_reload — forget the deleted units.
- *   4. Clear manifest + runtime columns in the DB; keep the project row
- *      (matches the Phase 4 brief; Nushell deletes the registry tree,
- *      but the OCaml rewrite keeps the row for Phase 5/6 `gc` to decide
- *      when to remove it entirely). *)
+ *   4. Clear manifest + runtime columns in the DB; keep the project row.
+ *      (Nushell deleted the registry tree entirely. The OCaml rewrite
+ *      keeps the row so `pctl gc` can decide when to remove it, based
+ *      on class Live/Orphan/Unknown.) *)
 
 open Common
 module Gc_dbus = Gc.Make (Systemctl.Dbus)

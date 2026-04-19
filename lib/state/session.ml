@@ -10,8 +10,7 @@
  * Caller responsibility: invoke [reset conn] exactly once per pctl
  * invocation, BEFORE any other query on the connection. Opportunistic
  * GC, project lookup, upsert — all of it presupposes the session has
- * been reconciled. See docs/src/plans/20260419-ocaml-rewrite.md
- * ("SQLite schema (v1)" → "Session scoping on every invocation"). *)
+ * been reconciled. *)
 
 let boot_id_path = "/proc/sys/kernel/random/boot_id"
 

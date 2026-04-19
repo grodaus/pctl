@@ -469,3 +469,37 @@ Fake Systemctl adapter (layer 2):
 - **`mkProject` return shape** — the Phase 0 task brief asked for `{ spec = <path>; }` (attrset with a `spec` attribute). I returned the `pkgs.writeText` derivation directly instead, because tuor writes `packages.pctl = mkProject { ... }` and then `nix build .#pctl` — which requires the return value to be a derivation, not a bare attrset. The outPath of the returned derivation IS `pctl-spec.json` (writeText semantics), so OCaml reading `./result` after `nix build` gets the spec.json file directly. If a future phase wants explicit attr access from Nix callers, add `passthru.spec = self` during the `writeText` construction or wrap with `pkgs.runCommand`; tuor's current call site does not need it.
 - **Nushell-era `nix flake check`s dropped** — `test-types`, `test-render`, `test-mkproject`, `test-nu` are removed because `render.nix` is deleted and `mkProject.nix` now emits spec.json (old fixtures no longer match). No public contract here — these were repo-internal — but surfaced for transparency. Replacement OCaml checks land per-phase (see TODO comment in `flake.nix`).
 - **`render.nix` deleted; `default.nix` no longer exports `render` / `sandbox`** — any downstream reaching into `pctl.lib.${system}.render` or `.sandbox` would break. No known consumer does (tuor does not); if one surfaces in Phase 7 repoint, we add a transitional shim.
+
+## Known limitations (post-rewrite)
+
+Carried into the first released OCaml build — each is acceptable for
+tuor's current surface but flagged for future work.
+
+1. **Manifest tracks only main-unit sha, not drop-ins.** The `manifest`
+   table hashes the rendered `.slice`/`.service` bytes; the
+   `pctl-runtime.conf` drop-in that carries PCTL_HOST/PCTL_ID is not
+   hashed. A drop-in change on its own does not show up in
+   `pctl reload`'s diff, so the user must `pctl down && pctl up` to
+   pick up a drop-in-only change. In practice the drop-in only changes
+   when `host` changes, which does trigger a main-unit rewrite — but
+   making this explicit is a future consistency win.
+2. **Two Nushell oracle tests not explicitly ported.** The prior
+   Nushell suite's `wait_failed_oneshot_test` and
+   `wait_overall_timeout_test` exercised readiness failure modes on
+   oneshot units. The OCaml rewrite's `test_wait_timeout.ml` covers
+   the overall-timeout case; the oneshot-failure case is covered only
+   by the `test_results.ml` "fail" service exiting non-zero. If we
+   ever want to assert the exact error-code path (bucket 6 vs 5) on
+   an oneshot-fail specifically, add a dedicated e2e.
+3. **100 ms dispatch-loop granularity for unit-state waits.** The sd-
+   bus dispatch fiber in `lib/systemctl/dbus.ml` alternates
+   `sd_bus_process` + `sd_bus_wait` with a 100 ms timeout. A
+   state-transition signal can take up to that long to propagate to a
+   `Probe.wait_unit_state` subscriber. A future revision could
+   integrate the bus fd into Eio's epoll loop for edge-triggered
+   dispatch, trimming this to sub-ms.
+4. **Tuor `tools/flake.nix` alejandra drift.** Pre-existing,
+   unrelated to the OCaml rewrite — tuor's own `tools/flake.nix`
+   formatter check complains about alejandra drift against a newer
+   alejandra. Documented here so a future contributor doesn't confuse
+   it with a pctl-side regression.

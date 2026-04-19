@@ -5,20 +5,19 @@
  *   Live     — session_id = current boot_id (row is from this session)
  *   Orphan   — otherwise (session_id NULL after session reset, path exists)
  *
- * Note: the plan's original derivation ("Orphan iff session_id != current
- * boot_id") never fires as written, because [Session.reset] NULLs every
- * stale session_id at connection open. The reconciled scheme preserves the
- * user-visible semantics (live / stale / deleted) and plays nicely with
- * session reset. Surfaced in the Phase 6 report.
+ * Note: the alternative derivation "Orphan iff session_id != current
+ * boot_id" never fires: [Session.reset] NULLs every stale session_id at
+ * connection open, so by the time Gc sees a row the stale path is always
+ * the "path exists but session_id is NULL" branch.
  *
- * Opportunistic sweep semantics (Q2 + Q13):
+ * Opportunistic sweep semantics:
  *   - Env guard PCTL_NO_GC=1 returns immediately, BEFORE any DB work.
  *   - Callers invoke [opportunistic_sweep] as the first op inside
  *     [Common.with_connection], so session reset has already run. A
  *     path that "no longer exists" is classified as Unknown; Unknown
  *     rows with no live session get their units removed + row deleted.
  *   - Failures warn to stderr and return unit; never abort the outer
- *     command (warn-and-proceed per Q13).
+ *     command (warn-and-proceed).
  *
  * Explicit purge (`pctl gc --yes`):
  *   - Sweeps every non-Live project. Prints one line per removed id.

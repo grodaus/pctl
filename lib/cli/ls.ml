@@ -7,11 +7,6 @@
  * more informative than the boolean `running`. Consumers reading only
  * the Nushell columns are unaffected.
  *
- * Plan note: the plan's "Internal schema" keeps class_ as (Live|Orphan|
- * Unknown); the task brief asked for columns {id, path, host, class}.
- * We emit {id, path, host, started_at, class} as the union — matching
- * both the Nushell oracle and the plan. Flagged in the Phase 6 report.
- *
  * Class derivation (reconciled with Session.reset — see Gc.class_of_row):
  *   Unknown  — path no longer exists on disk
  *   Live     — session_id = current boot_id

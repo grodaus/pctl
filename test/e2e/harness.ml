@@ -7,7 +7,7 @@
  *
  * Gating: skip_reason () returns Some <why> when the host lacks
  * DBUS_SESSION_BUS_ADDRESS or a /run/user/<uid> dir — callers exit 0
- * with a SKIP: message in that case. Matches the Phase-3 smoke test. *)
+ * with a SKIP: message in that case. *)
 
 let skip_reason () : string option =
   match Sys.getenv_opt "DBUS_SESSION_BUS_ADDRESS" with
@@ -149,9 +149,6 @@ let setup ~services : scratch =
   Unix.mkdir xdg_state_home 0o700;
   let prev = Sys.getenv_opt "XDG_STATE_HOME" in
   Unix.putenv "XDG_STATE_HOME" xdg_state_home;
-  (* Also isolate PCTL_STATE_DB so Db.default_path sees us. *)
-  Unix.putenv "PCTL_STATE_DB"
-    (Filename.concat xdg_state_home "pctl-state.db");
   { tmp; project_dir; spec_path; xdg_state_home; xdg_state_home_prev = prev }
 
 (* Project id for the scratch dir. *)
@@ -192,7 +189,7 @@ let read_dropin ~(id : Schema.project_id) ~unit_filename : string =
 (* Best-effort `systemctl --user reset-failed <pattern>` — clears
  * the `failed` tombstones systemd keeps around after a test that
  * expects a unit to fail. Tolerant of missing systemctl / patterns
- * that don't match anything. Phase 6 carry-over from Phase 5 cleanup. *)
+ * that don't match anything. *)
 let reset_failed pattern =
   let cmd =
     Printf.sprintf
@@ -354,7 +351,7 @@ let down ~scratch =
   Eio.Switch.run @@ fun sw ->
   Cli.Down.run ~sw ~env ~path:scratch.project_dir ()
 
-(* Phase 6 helpers — logs / status / list / gc. *)
+(* Helpers for logs / status / list / gc tests. *)
 
 let logs ?(lines = 50) ~svc ~scratch () : int * string =
   with_captured_stdout (fun () ->

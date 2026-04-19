@@ -1,4 +1,4 @@
-; Phase 3 + Phase 4 e2e tests — real systemd --user.
+; e2e tests — real systemd --user.
 ;
 ; Each test is declared as an `executable` (not `test`) so `dune runtest`
 ; does NOT pick them up; the `e2e` alias rules below run them via

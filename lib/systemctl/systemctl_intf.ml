@@ -1,14 +1,8 @@
 (* Systemctl port — shared signature.
  *
- * Plan binding: docs/src/plans/20260419-ocaml-rewrite.md §"Systemctl port".
- *
- * Note: the plan's verbatim signature has
- *   val connect : Eio_unix.Stdenv.base -> t
- * Implementations need a Switch they can borrow to spawn fibers (both
- * for In_mem subscriber callbacks and for the Dbus background dispatch
- * fiber). We widen the signature to take a switch at connect time.
- * This is a deliberate deviation from the plan's verbatim signature,
- * flagged in the Phase 3 report. *)
+ * Both implementations ([Dbus] and [In_mem]) need a Switch at connect
+ * time so they can spawn fibers: In_mem for subscriber callbacks, Dbus
+ * for the background dispatch fiber that drives sd_bus_process. *)
 module type SYSTEMCTL = sig
   type t
 

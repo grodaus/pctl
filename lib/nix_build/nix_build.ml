@@ -22,12 +22,9 @@ let last_line (s : string) : string =
   | None -> s
 
 let print_out_paths ~attr ?tree:_ ?path ~env ~sw () : string =
-  (* `tree` override: if the caller already has a pre-built out path, just
-   * return it. This mirrors the Nushell `--tree` flag semantics for Phase 4
-   * Purity. Actually: Phase 4 passes `tree` up at the CLI layer (Common)
-   * and skips calling this entirely when `tree` is set; we keep the
-   * parameter here for API completeness but document that it's handled
-   * higher up. *)
+  (* `tree` is handled at the CLI layer (see Cli.Common.spec_path) and
+   * skipped before we reach this function. The labelled param lingers
+   * only for API completeness with the Nushell `--tree` flag semantics. *)
   let cwd_arg : Eio.Fs.dir_ty Eio.Path.t option =
     match path with
     | Some p when p <> "" ->

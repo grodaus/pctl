@@ -1,4 +1,4 @@
-(* Phase 3 e2e smoke — real systemd --user over sd-bus.
+(* e2e smoke — real systemd --user over sd-bus.
  *
  * Gated: runs only when DBUS_SESSION_BUS_ADDRESS is set AND the
  * per-uid runtime dir exists. On sandboxed or non-session hosts the
@@ -62,10 +62,10 @@ let test_unit_state_reads_a_valid_variant () =
 let () =
   match skip_reason with
   | Some why ->
-      Printf.printf "SKIP: phase3 dbus smoke — %s\n" why;
+      Printf.printf "SKIP: dbus smoke — %s\n" why;
       exit 0
   | None ->
-      Alcotest.run "pctl phase3 dbus smoke"
+      Alcotest.run "pctl dbus smoke"
         [
           ( "dbus",
             [

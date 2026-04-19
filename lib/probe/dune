@@ -1,4 +1,4 @@
-; Phase 5 — per-service readiness wait.
+; Probe — per-service readiness wait.
 ;
 ; `Probe.wait_service` blocks a single fiber until a service reaches
 ; its terminal state; `Probe.wait_all` parallelises the per-service

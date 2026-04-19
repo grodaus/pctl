@@ -1,6 +1,6 @@
 (* pctl — declarative Nix spec -> systemd --user units.
  *
- * Phase 4 cmdliner entry: dispatches to Cli.{Up,Reload,Down,Restart}.
+ * Cmdliner entry: dispatches to the per-command runners in `Cli`.
  * Each command opens its own Eio environment + Switch; Systemctl.Dbus
  * is the default handle. Errors flow through Common.run_with_errors. *)
 
@@ -32,14 +32,16 @@ let up_cmd =
   let no_block =
     let doc =
       "Skip the readiness wait and return immediately after the systemd \
-       start calls. Append '(async)' to the status line."
+       start calls. Appends '(async)' to the status line. Cannot be \
+       combined with --wait."
     in
     Arg.(value & flag & info [ "no-block" ] ~doc)
   in
   let wait =
     let doc =
       "Block until every service is ready (readinessProbe exits 0 or the \
-       unit reaches active), bounded by --timeout."
+       unit reaches active), bounded by --timeout. Cannot be combined \
+       with --no-block."
     in
     Arg.(value & flag & info [ "wait" ] ~doc)
   in

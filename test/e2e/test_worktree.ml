@@ -1,13 +1,12 @@
 (* e2e parity: two worktrees get distinct ids; taking one down does not
  * affect the other.
  *
- * Each scratch sets its own PCTL_STATE_DB, but Unix.putenv overwrites
- * the global. So we must point env at the right DB before EACH
- * operation — on-the-fly switching. *)
+ * Each scratch has its own XDG_STATE_HOME, but Unix.putenv overwrites
+ * the global. So we must point the env at the right state home before
+ * EACH operation — on-the-fly switching. *)
 
 let set_db (s : Harness.scratch) =
-  Unix.putenv "PCTL_STATE_DB"
-    (Filename.concat s.xdg_state_home "pctl-state.db")
+  Unix.putenv "XDG_STATE_HOME" s.xdg_state_home
 
 let up_in (s : Harness.scratch) =
   set_db s;

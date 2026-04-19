@@ -8,18 +8,16 @@
  *      is [Service]-only; systemd warns otherwise).
  *   4. The manifest covers main unit files only, not drop-ins.
  *
- * The content written to the main unit file is produced by Render.
- * Nushell copied pre-rendered bytes from a store tree; the OCaml port
- * renders in-process at install time. *)
+ * The content written to the main unit file is produced by Render. *)
 
 (* ------------------------------------------------------------------ *)
 (* Paths — where pctl writes on disk.                                  *)
 (*                                                                     *)
-(* `user.control` is under $XDG_RUNTIME_DIR/systemd/user.control (NOT  *)
-(* ~/.config/systemd/user.control, despite what the Phase 4 task brief *)
-(* said — the Nushell implementation uses XDG_RUNTIME_DIR and the e2e  *)
-(* tests assert that). XDG_RUNTIME_DIR must be set; we raise the same  *)
-(* "not set" error as the Nushell `require-runtime-dir` helper.        *)
+(* `user.control` lives under $XDG_RUNTIME_DIR/systemd/user.control    *)
+(* (NOT ~/.config/systemd/user.control, which persists across reboots  *)
+(* — we want a tmpfs-backed path that systemd reset-failed can clean). *)
+(* XDG_RUNTIME_DIR must be set; we raise the same "not set" error as   *)
+(* the Nushell `require-runtime-dir` helper.                           *)
 (* ------------------------------------------------------------------ *)
 
 module Paths = struct
