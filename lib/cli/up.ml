@@ -48,6 +48,10 @@ let run ~sw ~env ?tree ?nix ?path ?(no_block = false) ?(wait = false)
         let project_path = resolve_path path in
         let spec_path_v = spec_path ?tree ?nix ~env ~sw ~project_path () in
         let spec = Spec.load ~path:spec_path_v in
+        let spec_blob =
+          try Some (read_file spec_path_v)
+          with Sys_error _ -> None
+        in
         let id = Identity.derive ~path:project_path in
         with_connection ~env ~sw (fun conn ->
             (* Opportunistic sweep — must run AFTER session_reset (inside
@@ -86,6 +90,7 @@ let run ~sw ~env ?tree ?nix ?path ?(no_block = false) ?(wait = false)
                 started_at = Some started_at;
                 store_tree = Some spec_path_v;
                 session_id = (if boot_id = "" then None else Some boot_id);
+                spec_json = spec_blob;
               };
             State.Projects.replace_manifest conn
               ~project_id:(Schema.Project_id.to_string id)

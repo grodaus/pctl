@@ -1,13 +1,14 @@
 (* Projects — CRUD over the `projects` table, plus the `manifest` table
  * and the pure manifest-diff.
  *
- * Project row shape (migrations/001_init.sql):
+ * Project row shape (migrations/001_init.sql + 002_spec_blob.sql):
  *   id           TEXT PRIMARY KEY
  *   path         TEXT NOT NULL
  *   host         TEXT
  *   started_at   TEXT
  *   store_tree   TEXT
  *   session_id   TEXT
+ *   spec_json    TEXT  -- full spec.json as persisted by the last `up`
  *
  * Manifest row shape:
  *   project_id      TEXT
@@ -27,18 +28,25 @@ type t = {
   started_at : string option;
   store_tree : string option;
   session_id : string option;
+  spec_json : string option;
 }
 
 let row_type =
-  (* id, path, host, started_at, store_tree, session_id *)
-  t6 string string (option string) (option string) (option string)
-    (option string)
+  (* id, path, host, started_at, store_tree, session_id, spec_json *)
+  t7 string string (option string) (option string) (option string)
+    (option string) (option string)
 
 let to_row r =
-  (r.id, r.path, r.host, r.started_at, r.store_tree, r.session_id)
+  ( r.id,
+    r.path,
+    r.host,
+    r.started_at,
+    r.store_tree,
+    r.session_id,
+    r.spec_json )
 
-let of_row (id, path, host, started_at, store_tree, session_id) =
-  { id; path; host; started_at; store_tree; session_id }
+let of_row (id, path, host, started_at, store_tree, session_id, spec_json) =
+  { id; path; host; started_at; store_tree; session_id; spec_json }
 
 (* Upsert: INSERT OR on-conflict update. Keeps id/path stable; other
  * columns are overwritten (they are session-scoped and reset by
@@ -46,28 +54,29 @@ let of_row (id, path, host, started_at, store_tree, session_id) =
 let upsert_req =
   (row_type ->. unit)
     "INSERT INTO projects \
-       (id, path, host, started_at, store_tree, session_id) \
-     VALUES (?, ?, ?, ?, ?, ?) \
+       (id, path, host, started_at, store_tree, session_id, spec_json) \
+     VALUES (?, ?, ?, ?, ?, ?, ?) \
      ON CONFLICT(id) DO UPDATE SET \
        path       = excluded.path, \
        host       = excluded.host, \
        started_at = excluded.started_at, \
        store_tree = excluded.store_tree, \
-       session_id = excluded.session_id"
+       session_id = excluded.session_id, \
+       spec_json  = excluded.spec_json"
 
 let get_by_id_req =
   (string ->? row_type)
-    "SELECT id, path, host, started_at, store_tree, session_id \
+    "SELECT id, path, host, started_at, store_tree, session_id, spec_json \
      FROM projects WHERE id = ?"
 
 let get_by_path_req =
   (string ->? row_type)
-    "SELECT id, path, host, started_at, store_tree, session_id \
+    "SELECT id, path, host, started_at, store_tree, session_id, spec_json \
      FROM projects WHERE path = ?"
 
 let all_req =
   (unit ->* row_type)
-    "SELECT id, path, host, started_at, store_tree, session_id \
+    "SELECT id, path, host, started_at, store_tree, session_id, spec_json \
      FROM projects ORDER BY id"
 
 let delete_by_id_req =
@@ -81,7 +90,8 @@ let delete_by_id_req =
 let clear_runtime_fields_req =
   (string ->. unit)
     "UPDATE projects \
-     SET host = NULL, started_at = NULL, store_tree = NULL, session_id = NULL \
+     SET host = NULL, started_at = NULL, store_tree = NULL, session_id = NULL, \
+         spec_json = NULL \
      WHERE id = ?"
 
 let raise_io ~id (e : [> Caqti_error.t ]) =

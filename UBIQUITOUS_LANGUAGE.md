@@ -41,9 +41,8 @@ _Derived by [`lib/identity/`](./lib/identity) (project id + host allocation); pl
 | **Known marker** | Persistent per-project file at `$XDG_STATE_HOME/pctl/known/<id>` containing the absolute **project path**. Written on `up`, untouched by `down`, survives reboot. The only signal **gc** uses to tell a live project's state from garbage. | —           |
 | **PCTL_ID**      | Env var set in every drop-in exposing the **project id** to the service process                                | —                      |
 | **PCTL_HOST**    | Env var set in service drop-ins exposing the allocated **host** to the service process                         | —                      |
-| **@@PROJECT@@**  | Placeholder token in filenames and unit bodies inside the **store tree**, substituted at install time with the **project id** | Template, marker       |
-| **@@PROJECT_PATH@@** | Placeholder token in unit bodies inside the **store tree**, substituted at install time with the **project path**. Internal — emitted by `workspace` rendering; users do not write it directly. | — |
-| **Workspace**    | Per-service spec field `{ cwd?, writable? }` opting into `WorkingDirectory=<project path>` and a `ProtectHome=tmpfs` + `BindPaths=<project path>` write-through. Not the bare word "workspace" as a synonym for project. | —                      |
+| **Workspace**    | Per-service spec field `{ cwd?, writable? }` opting into `WorkingDirectory=<project path>` and a `ProtectHome=tmpfs` + `BindPaths=<project path>` write-through. The OCaml renderer computes these values from the flag — users don't write paths directly. | —                      |
+| **Logical suffix** | A **service_config** value like `StateDirectory = "pg"` that the OCaml renderer expands to `pctl-<project id>-pg` at install time. Applied to `StateDirectory` / `RuntimeDirectory` / `CacheDirectory` / `LogsDirectory` / `ConfigurationDirectory`. Replaces the pre-v2 `@@PROJECT@@` placeholder convention. | — |
 | **Worktree**     | A distinct project path (e.g. a git worktree) whose identity-from-path rule guarantees a distinct **project id**, **slice**, and **host** — letting siblings coexist | Copy, clone |
 
 ## Garbage collection
@@ -52,7 +51,7 @@ _Implemented in [`lib/gc/`](./lib/gc); known markers written alongside the regis
 
 | Term             | Definition                                                                                                                                | Aliases to avoid        |
 | ---------------- | ----------------------------------------------------------------------------------------------------------------------------------------- | ----------------------- |
-| **State dir**    | A directory under `$XDG_STATE_HOME` created by systemd from a service's `StateDirectory=pctl-@@PROJECT@@-<svc>` — persists across `down`  | StateDirectory, data dir |
+| **State dir**    | A directory under `$XDG_STATE_HOME` systemd creates from a service's `StateDirectory=<logical suffix>` (the renderer expands it to `pctl-<project id>-<suffix>`) — persists across `down` | StateDirectory, data dir |
 | **Gc**           | `pctl gc` — classifies every **state dir** by cross-referencing **known markers**; `--yes` deletes only classified-orphan dirs            | Cleanup, purge          |
 | **Live (gc)**    | A **state dir** whose **known marker** points at a **project path** that still exists on disk — kept                                      | Active                  |
 | **Orphan (gc)** | A **state dir** whose **known marker** points at a **project path** that no longer exists — the only class `gc --yes` deletes             | Stale, dead             |
@@ -105,7 +104,7 @@ _Three layers in [`test/unit/`](./test/unit), [`test/integration/`](./test/integ
 
 > **Dev:** "When I run `pctl up`, where does the **store tree** actually come from?"
 
-> **Domain expert:** "`mkProject` reads your **spec** and emits a **store tree** with `@@PROJECT@@` placeholders in every filename and body. `up` resolves the **project id** from the **project path**, substitutes the placeholder at install time, and writes the resulting **units** into **user.control** along with a **drop-in** per unit carrying **PCTL_ID** and (for services) **PCTL_HOST**."
+> **Domain expert:** "`mkProject` reads your **spec** and emits a **store tree** — a single `spec.json` blob holding per-service configs as pure logical data. `up` resolves the **project id** from the **project path**, renders one **unit** per service (deriving filenames, `Slice=pctl-<id>.slice`, and any **logical suffix** state/runtime dirs from the id), and writes them into **user.control** along with a **drop-in** per unit carrying **PCTL_ID** and (for services) **PCTL_HOST**."
 
 > **Dev:** "So the **slice** only gets **PCTL_ID**, not **PCTL_HOST**?"
 

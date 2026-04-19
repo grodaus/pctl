@@ -17,7 +17,7 @@ updated: 2026-04-19
 Current `pctl` is a Nushell PoC (<1 day old) that validated the core idea: declarative Nix specs → `systemd --user` units with per-project host/slice isolation. The sole consumer today is [grodaus/tuor](../../../tuor/flake.nix), which exercises:
 
 - Spec shape: `services.{name} = {command, env, dependsOn, workspace.{cwd,writable}, readinessProbe, serviceConfig}`.
-- `@@PROJECT@@` in user-written `serviceConfig.StateDirectory` (public contract).
+- Logical `serviceConfig.StateDirectory` (the renderer scopes it into `pctl-<project id>-<suffix>`).
 - CLI: `up --no-block`, `results --timeout N --json`, `logs <svc> -n N`, `host`, `down`, `restart <svc>`.
 - Mixed long-running (pg, server, fake-llm) + oneshot (migrate, test-*) services in one project.
 
@@ -77,11 +77,11 @@ services.<name> = {
     periodSeconds = 1;
     timeoutSeconds = 30;
   };                                     # optional
-  serviceConfig = { ... };               # systemd passthrough; @@PROJECT@@ allowed
+  serviceConfig = { ... };               # systemd passthrough; logical suffixes only
 };
 ```
 
-**Placeholders** — `@@PROJECT@@` (id) and `@@PROJECT_PATH@@` (absolute project path). Declared as OCaml constants + documented in the spec.json schema.
+**No placeholders** — `@@PROJECT@@` / `@@PROJECT_PATH@@` were removed in spec.json v2. The OCaml renderer computes every id- or path-derived value from the `workspace` flags and the known project id/path.
 
 **Runtime env vars** — `PCTL_ID` in every unit drop-in, `PCTL_HOST` in service drop-ins only.
 
@@ -106,27 +106,23 @@ services.<name> = {
 
 `elapsed` is integer nanoseconds. `state` ∈ `{active, failed, inactive, probe-failed, timed-out}`. `kind` ∈ `{probe, unit-state}`. Order matches spec.json service declaration order, **not** completion order.
 
-**`spec.json` schema v1** (Nix emits, OCaml consumes):
+**`spec.json` schema v2** (Nix emits, OCaml consumes):
 
 ```json
 {
-  "version": 1,
-  "slice": {
-    "unit_filename": "pctl-@@PROJECT@@.slice",
-    "slice_config": { ... }
-  },
+  "version": 2,
+  "slice": { "slice_config": { ... } },
   "services": {
     "pg": {
       "kind": "simple",
       "depends_on": [],
       "workspace": { "cwd": true, "writable": true },
       "probe": { "exec": [...], "period_seconds": 1, "timeout_seconds": 30 },
-      "unit_filename": "pctl-@@PROJECT@@-pg.service",
       "service_config": {
         "ExecStart": "/nix/store/.../bin/postgres",
         "Type": "simple",
         "Restart": "on-failure",
-        "StateDirectory": "pctl-@@PROJECT@@-pg",
+        "StateDirectory": "pg",
         ...
       }
     }
@@ -134,7 +130,9 @@ services.<name> = {
 }
 ```
 
-OCaml rejects unknown `version`. `service_config` is fully merged by Nix (command → ExecStart, env → Environment=, limits → MemoryMax, user's explicit serviceConfig layered on top, sandbox-defaults filling unspecified hardening). OCaml treats `service_config` as `string → string` — renders ini, substitutes placeholder values, writes.
+OCaml rejects any `version` other than 2 (v1 was the placeholder-carrying predecessor; it's now unsupported). `service_config` is fully merged by Nix (command → ExecStart, env → Environment=, limits → MemoryMax, user's explicit serviceConfig layered on top, sandbox-defaults filling unspecified hardening). OCaml treats `service_config` as `string → string` — renders ini, applies per-project id prefix to known runtime-dir keys, writes.
+
+Filenames are derived by OCaml — `pctl-<project id>.slice`, `pctl-<project id>-<service name>.service`. `StateDirectory` / `RuntimeDirectory` / `CacheDirectory` / `LogsDirectory` / `ConfigurationDirectory` values the user writes as logical suffixes (`"pg"`, `"server"`) are rendered as `pctl-<project id>-<suffix>` so distinct projects don't collide under `/var/lib` / `/run` etc. Workspace-derived keys (`WorkingDirectory`, `BindPaths`, `ProtectHome=tmpfs`) are produced by the OCaml renderer from `workspace.cwd` / `workspace.writable`, not by Nix.
 
 ## Architecture overview
 
@@ -231,17 +229,17 @@ module Schema = struct
   }
 
   type service_spec = {
+    name           : string;                (* outer object key *)
     kind           : kind;
     depends_on     : string list;
     workspace      : { cwd : bool; writable : bool };
     probe          : probe option;
-    unit_filename  : string;                (* still has @@PROJECT@@ at this stage *)
     service_config : (string * string) list;
   }
 
   type spec = {
-    version  : int;
-    slice    : { unit_filename : string; slice_config : (string * string) list };
+    version  : int;                         (* 2 in the current schema *)
+    slice    : { slice_config : (string * string) list };
     services : service_spec StringMap.t;
   }
 
@@ -293,9 +291,9 @@ module InMem : SYSTEMCTL   (* test fake; exposes push APIs for tests *)
 
 Eliminates the `PCTL_SYSTEMCTL` env var stub. Integration tests use `InMem`; e2e and production use `Dbus`.
 
-## SQLite schema (v1)
+## SQLite schema (v2)
 
-See `migrations/001_init.sql`:
+Migrations at `migrations/001_init.sql` + `migrations/002_spec_blob.sql`:
 
 ```sql
 CREATE TABLE projects (
@@ -304,7 +302,8 @@ CREATE TABLE projects (
   host         TEXT,
   started_at   TEXT,
   store_tree   TEXT,
-  session_id   TEXT
+  session_id   TEXT,
+  spec_json    TEXT              -- added in v2, persists the full spec.json
 );
 
 CREATE INDEX idx_projects_session ON projects(session_id);
@@ -321,7 +320,7 @@ CREATE TABLE meta (
   value TEXT NOT NULL
 );
 
-INSERT INTO meta (key, value) VALUES ('schema_version', '1'), ('last_boot_id', '');
+INSERT INTO meta (key, value) VALUES ('schema_version', '2'), ('last_boot_id', '');
 ```
 
 Session scoping on every invocation:

@@ -13,7 +13,6 @@ let () =
         Printf.sprintf
           "/run/current-system/sw/bin/sh -c 'echo %s; exec /run/current-system/sw/bin/sleep infinity'"
           sentinel );
-      ("Slice", "pctl-@@PROJECT@@.slice");
     ]
   in
   Harness.with_scratch ~services:[ Harness.service ~cfg "logger" ]

@@ -41,7 +41,7 @@ let test_migrate_idempotent () =
   (* Second run must be a no-op (no errors, version unchanged). *)
   Db.migrate conn;
   Alcotest.(check (option string))
-    "schema_version" (Some "1")
+    "schema_version" (Some "2")
     (Db.meta_get conn ~key:"schema_version");
   Alcotest.(check (option string))
     "last_boot_id starts empty" (Some "")
@@ -49,8 +49,9 @@ let test_migrate_idempotent () =
 
 (* ----- projects CRUD -------------------------------------------- *)
 
-let mk_project ?host ?started_at ?store_tree ?session_id id path : Projects.t =
-  { id; path; host; started_at; store_tree; session_id }
+let mk_project ?host ?started_at ?store_tree ?session_id ?spec_json id path :
+    Projects.t =
+  { id; path; host; started_at; store_tree; session_id; spec_json }
 
 let test_projects_crud () =
   eio_run @@ fun ~sw ~stdenv ->

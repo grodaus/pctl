@@ -16,6 +16,9 @@ let run ~sw ~env ?tree ?nix ?path () : int =
       let project_path = resolve_path path in
       let spec_path_v = spec_path ?tree ?nix ~env ~sw ~project_path () in
       let spec = Spec.load ~path:spec_path_v in
+      let spec_blob =
+        try Some (read_file spec_path_v) with Sys_error _ -> None
+      in
       let id = Identity.derive ~path:project_path in
       with_connection ~env ~sw (fun conn ->
           opportunistic_sweep ~env ~sw ~conn;
@@ -48,7 +51,7 @@ let run ~sw ~env ?tree ?nix ?path () : int =
                 if r.action = Schema.Removed then Some r.unit_ else None)
               rows
           in
-          Install.Install.remove_units ~id removed_files;
+          Install.Install.remove_units removed_files;
           let started_at =
             match existing_started_at conn ~id with
             | Some s when s <> "" -> s
@@ -63,6 +66,7 @@ let run ~sw ~env ?tree ?nix ?path () : int =
               started_at = Some started_at;
               store_tree = Some spec_path_v;
               session_id = (if boot_id = "" then None else Some boot_id);
+              spec_json = spec_blob;
             };
           State.Projects.replace_manifest conn
             ~project_id:(Schema.Project_id.to_string id)

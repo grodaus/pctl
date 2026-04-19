@@ -22,7 +22,6 @@ let oneshot name exec_line =
         ("Type", "oneshot");
         ("RemainAfterExit", "yes");
         ("ExecStart", exec_line);
-        ("Slice", "pctl-@@PROJECT@@.slice");
       ];
     workspace = None;
   }
@@ -35,7 +34,6 @@ let simple name exec_line =
       [
         ("Type", "simple");
         ("ExecStart", exec_line);
-        ("Slice", "pctl-@@PROJECT@@.slice");
       ];
     workspace = None;
   }

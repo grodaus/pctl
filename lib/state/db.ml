@@ -115,6 +115,7 @@ let meta_set ((module C : Caqti_eio.CONNECTION)) ~key ~value : unit =
 (* ---- Schema migrations --------------------------------------------- *)
 
 let init_sql : string = [%blob "../../migrations/001_init.sql"]
+let spec_blob_sql : string = [%blob "../../migrations/002_spec_blob.sql"]
 
 (* A migration: version it bumps to and the SQL to run. Kept as a
  * simple list so adding a migration in a future phase is a one-line
@@ -122,7 +123,10 @@ let init_sql : string = [%blob "../../migrations/001_init.sql"]
 type migration = { target_version : int; sql : string }
 
 let migrations : migration list =
-  [ { target_version = 1; sql = init_sql } ]
+  [
+    { target_version = 1; sql = init_sql };
+    { target_version = 2; sql = spec_blob_sql };
+  ]
 
 (* [meta.schema_version] is a TEXT column (see 001_init.sql). Absent
  * means the schema hasn't been created yet — we're at version 0. *)

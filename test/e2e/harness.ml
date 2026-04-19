@@ -44,17 +44,15 @@ let rec rm_rf p =
   end
   else try Sys.remove p with Sys_error _ -> ()
 
-(* Write a spec.json fixture containing a single sleep-infinity service,
- * a trivial slice, and optional `extra_services` keyed by name with
- * pre-built service_config records. `services` maps
- * service name -> list of (key, value) pairs for service_config. *)
+(* Write a spec.json fixture containing sleep-infinity services and a
+ * trivial slice. `services` maps service name -> service_config list.
+ * No `@@PROJECT@@` placeholders — spec.json v2 is pure logical data. *)
 let sleep_bin = "/run/current-system/sw/bin/sleep"
 
 let default_service_config () =
   [
     ("Type", "simple");
     ("ExecStart", Printf.sprintf "%s infinity" sleep_bin);
-    ("Slice", "pctl-@@PROJECT@@.slice");
   ]
 
 type probe_fixture = {
@@ -81,24 +79,21 @@ let spec_json ~(services : service_fixture list) : string =
   let service_to_json (sf : service_fixture) : Spec.service_json =
     {
       kind = Schema.Simple;
-      unit_filename =
-        Printf.sprintf "pctl-@@PROJECT@@-%s.service" sf.name;
       service_config = sf.service_config;
       depends_on = [];
       workspace =
         (match sf.workspace with
-         | None -> None
-         | Some (cwd, writable) -> Some { cwd; writable });
+         | None -> { cwd = false; writable = false }
+         | Some (cwd, writable) -> { cwd; writable });
       probe =
-        (match sf.probe with
-         | None -> None
-         | Some p ->
-             Some
-               {
-                 exec = p.exec;
-                 period_seconds = p.period_seconds;
-                 timeout_seconds = p.timeout_seconds;
-               });
+        Option.map
+          (fun (p : probe_fixture) : Spec.probe_json ->
+            {
+              exec = p.exec;
+              period_seconds = p.period_seconds;
+              timeout_seconds = p.timeout_seconds;
+            })
+          sf.probe;
     }
   in
   let services_obj =
@@ -107,14 +102,12 @@ let spec_json ~(services : service_fixture list) : string =
          (fun sf -> (sf.name, Spec.service_json_to_yojson (service_to_json sf)))
          services)
   in
-  let slice : Spec.slice_json =
-    { unit_filename = "pctl-@@PROJECT@@.slice"; slice_config = [] }
-  in
+  let slice : Spec.slice_json = { slice_config = [] } in
   `Assoc
     [
       ("services", services_obj);
       ("slice", Spec.slice_json_to_yojson slice);
-      ("version", `Int 1);
+      ("version", `Int 2);
     ]
   |> Yojson.Safe.to_string
 
@@ -126,29 +119,38 @@ type scratch = {
   xdg_state_home_prev : string option;
 }
 
-let setup ~services : scratch =
+(* [setup_with] runs [build_services] AFTER the tmpdir + project_dir
+ * exist, so tests that bake the real project_dir into their
+ * ExecStart/env can do so. Plain [setup ~services] is the common case
+ * where services are static. *)
+let setup_with ~(build_services : scratch -> service_fixture list) : scratch =
   let tmp = fresh_tmpdir "pctl-e2e" in
   let project_dir = Filename.concat tmp "project" in
   Unix.mkdir project_dir 0o700;
   let spec_path = Filename.concat tmp "spec.json" in
-  let oc = open_out spec_path in
-  output_string oc (spec_json ~services);
-  close_out oc;
   let xdg_state_home = Filename.concat tmp "state" in
   Unix.mkdir xdg_state_home 0o700;
   let prev = Sys.getenv_opt "XDG_STATE_HOME" in
   Unix.putenv "XDG_STATE_HOME" xdg_state_home;
-  { tmp; project_dir; spec_path; xdg_state_home; xdg_state_home_prev = prev }
+  let scratch =
+    { tmp; project_dir; spec_path; xdg_state_home; xdg_state_home_prev = prev }
+  in
+  let services = build_services scratch in
+  let oc = open_out spec_path in
+  output_string oc (spec_json ~services);
+  close_out oc;
+  scratch
+
+let setup ~services : scratch = setup_with ~build_services:(fun _ -> services)
 
 (* Project id for the scratch dir. *)
 let project_id (s : scratch) : Schema.project_id =
   Identity.derive ~path:s.project_dir
 
-(* Read a unit file from user.control. Returns None if missing. *)
-let read_unit ~(id : Schema.project_id) ~unit_filename : string option =
-  let p =
-    Install.Paths.service_path ~id ~unit_filename
-  in
+(* Unit filenames are concrete (pctl-<id>-<svc>.service); tests pass
+ * them in directly. No placeholders, no id-substitution needed. *)
+let read_unit ~unit_filename : string option =
+  let p = Install.Paths.unit_path ~unit_filename in
   if Sys.file_exists p then
     let ic = open_in p in
     Fun.protect
@@ -158,16 +160,14 @@ let read_unit ~(id : Schema.project_id) ~unit_filename : string option =
         Some (really_input_string ic n))
   else None
 
-let unit_exists ~(id : Schema.project_id) ~unit_filename : bool =
-  Sys.file_exists
-    (Install.Paths.service_path ~id ~unit_filename)
+let unit_exists ~unit_filename : bool =
+  Sys.file_exists (Install.Paths.unit_path ~unit_filename)
 
-let dropin_exists ~(id : Schema.project_id) ~unit_filename : bool =
-  Sys.file_exists
-    (Install.Paths.dropin_file ~id ~unit_filename)
+let dropin_exists ~unit_filename : bool =
+  Sys.file_exists (Install.Paths.dropin_file ~unit_filename)
 
-let read_dropin ~(id : Schema.project_id) ~unit_filename : string =
-  let p = Install.Paths.dropin_file ~id ~unit_filename in
+let read_dropin ~unit_filename : string =
+  let p = Install.Paths.dropin_file ~unit_filename in
   let ic = open_in p in
   Fun.protect
     ~finally:(fun () -> close_in ic)
@@ -343,6 +343,15 @@ let with_scratch ~services f =
     ~finally:(fun () -> teardown s)
     (fun () -> f s)
 
+(* Variant that lets the services be built from the scratch — used when
+ * a service's ExecStart / BindPaths etc. must reference the concrete
+ * project_dir (not knowable before setup). *)
+let with_scratch_late build_services f =
+  let s = setup_with ~build_services in
+  Fun.protect
+    ~finally:(fun () -> teardown s)
+    (fun () -> f s)
+
 (* ------------------------------------------------------------------ *)
 (* Assertion helpers — collapse repetition in the 20 e2e test files.
  *
@@ -391,25 +400,25 @@ let assert_unit_inactive unit_name =
     ~label:(Printf.sprintf "%s inactive" unit_name)
     (is_active unit_name)
 
-let assert_unit_exists ~id unit_filename =
+let assert_unit_exists unit_filename =
   assert_true
     ~label:(Printf.sprintf "%s file exists" unit_filename)
-    (unit_exists ~id ~unit_filename)
+    (unit_exists ~unit_filename)
 
-let assert_unit_gone ~id unit_filename =
+let assert_unit_gone unit_filename =
   assert_false
     ~label:(Printf.sprintf "%s file gone" unit_filename)
-    (unit_exists ~id ~unit_filename)
+    (unit_exists ~unit_filename)
 
-let assert_dropin_exists ~id unit_filename =
+let assert_dropin_exists unit_filename =
   assert_true
     ~label:(Printf.sprintf "%s dropin exists" unit_filename)
-    (dropin_exists ~id ~unit_filename)
+    (dropin_exists ~unit_filename)
 
-let assert_dropin_gone ~id unit_filename =
+let assert_dropin_gone unit_filename =
   assert_false
     ~label:(Printf.sprintf "%s dropin gone" unit_filename)
-    (dropin_exists ~id ~unit_filename)
+    (dropin_exists ~unit_filename)
 
 let assert_contains ~label haystack needle =
   if not (contains haystack needle) then
@@ -419,9 +428,12 @@ let assert_not_contains ~label haystack needle =
   if contains haystack needle then
     Alcotest.failf "%s: unexpected substring %S in %S" label needle haystack
 
-(* Name helpers — mirror Install.Paths conventions. *)
-
+(* Name helpers — delegate to the canonical Schema derivations so tests
+ * and production agree on the filename convention. *)
 let slice_name id_s = Printf.sprintf "pctl-%s.slice" id_s
 let service_name id_s svc = Printf.sprintf "pctl-%s-%s.service" id_s svc
-let slice_filename = "pctl-@@PROJECT@@.slice"
-let service_filename svc = Printf.sprintf "pctl-@@PROJECT@@-%s.service" svc
+
+let slice_filename_for ~(id : Schema.project_id) = Schema.slice_filename ~id
+
+let service_filename_for ~(id : Schema.project_id) ~service_name =
+  Schema.service_filename ~id ~service_name

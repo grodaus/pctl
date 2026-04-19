@@ -37,7 +37,8 @@ let reset_query =
   let open Caqti_type.Std in
   (string ->. unit)
     "UPDATE projects \
-     SET host = NULL, started_at = NULL, store_tree = NULL, session_id = NULL \
+     SET host = NULL, started_at = NULL, store_tree = NULL, session_id = NULL, \
+         spec_json = NULL \
      WHERE session_id IS NOT NULL AND session_id != ?"
 
 let raise_io ~id (e : [> Caqti_error.t ]) =

@@ -19,9 +19,7 @@ let check_raises_pctl ~name ~predicate f =
 
 let test_spec_load_single () =
   let spec = Spec.load ~path:(Test_helpers.spec_fixture "single") in
-  Alcotest.(check int) "version" 1 spec.version;
-  Alcotest.(check string)
-    "slice unit_filename" "pctl-@@PROJECT@@.slice" spec.slice.unit_filename;
+  Alcotest.(check int) "version" 2 spec.version;
   Alcotest.(check int) "service count" 1 (StringMap.cardinal spec.services);
   let pg = StringMap.find "pg" spec.services in
   Alcotest.(check string) "name" "pg" pg.name;
@@ -30,8 +28,6 @@ let test_spec_load_single () =
   Alcotest.(check bool) "workspace.cwd" false pg.workspace.cwd;
   Alcotest.(check bool) "workspace.writable" false pg.workspace.writable;
   Alcotest.(check bool) "probe is None" true (pg.probe = None);
-  Alcotest.(check string)
-    "unit_filename" "pctl-@@PROJECT@@-pg.service" pg.unit_filename;
   let sc = pg.service_config in
   Alcotest.(check (option string))
     "ExecStart" (Some "/bin/true") (List.assoc_opt "ExecStart" sc);
@@ -63,15 +59,7 @@ let test_spec_load_workspace () =
   let spec = Spec.load ~path:(Test_helpers.spec_fixture "workspace") in
   let worker = StringMap.find "worker" spec.services in
   Alcotest.(check bool) "cwd" true worker.workspace.cwd;
-  Alcotest.(check bool) "writable" true worker.workspace.writable;
-  let sc = worker.service_config in
-  Alcotest.(check (option string))
-    "WorkingDirectory" (Some "@@PROJECT_PATH@@")
-    (List.assoc_opt "WorkingDirectory" sc);
-  Alcotest.(check (option string))
-    "BindPaths" (Some "@@PROJECT_PATH@@") (List.assoc_opt "BindPaths" sc);
-  Alcotest.(check (option string))
-    "ProtectHome" (Some "tmpfs") (List.assoc_opt "ProtectHome" sc)
+  Alcotest.(check bool) "writable" true worker.workspace.writable
 
 let test_spec_load_missing_file () =
   check_raises_pctl ~name:"missing file"
@@ -93,8 +81,7 @@ let test_spec_load_unknown_version () =
   let path =
     Test_helpers.write_temp_file ~prefix:"pctl-v99-"
       ~contents:
-        "{\"version\": 99, \"slice\": {\"unit_filename\": \"s.slice\"}, \
-         \"services\": {}}"
+        "{\"version\": 99, \"slice\": {}, \"services\": {}}"
   in
   Fun.protect
     ~finally:(fun () -> try Sys.remove path with _ -> ())
@@ -103,11 +90,25 @@ let test_spec_load_unknown_version () =
         ~predicate:(function Spec_unknown_version 99 -> true | _ -> false)
         (fun () -> Spec.load ~path))
 
+let test_spec_load_v1_rejected () =
+  (* v1 was the placeholder-carrying schema; v2 dropped the placeholder
+   * convention. Loader rejects v1 with a clear version error. *)
+  let path =
+    Test_helpers.write_temp_file ~prefix:"pctl-v1-"
+      ~contents:
+        "{\"version\": 1, \"slice\": {}, \"services\": {}}"
+  in
+  Fun.protect
+    ~finally:(fun () -> try Sys.remove path with _ -> ())
+    (fun () ->
+      check_raises_pctl ~name:"v1 rejected"
+        ~predicate:(function Spec_unknown_version 1 -> true | _ -> false)
+        (fun () -> Spec.load ~path))
+
 let test_spec_load_missing_version () =
   let path =
     Test_helpers.write_temp_file ~prefix:"pctl-novers-"
-      ~contents:
-        "{\"slice\": {\"unit_filename\": \"s.slice\"}, \"services\": {}}"
+      ~contents:"{\"slice\": {}, \"services\": {}}"
   in
   Fun.protect
     ~finally:(fun () -> try Sys.remove path with _ -> ())
@@ -119,7 +120,7 @@ let test_spec_load_missing_version () =
 let test_spec_load_missing_slice () =
   let path =
     Test_helpers.write_temp_file ~prefix:"pctl-noslice-"
-      ~contents:"{\"version\": 1, \"services\": {}}"
+      ~contents:"{\"version\": 2, \"services\": {}}"
   in
   Fun.protect
     ~finally:(fun () -> try Sys.remove path with _ -> ())
@@ -131,8 +132,7 @@ let test_spec_load_missing_slice () =
 let test_spec_load_missing_services () =
   let path =
     Test_helpers.write_temp_file ~prefix:"pctl-nosvc-"
-      ~contents:
-        "{\"version\": 1, \"slice\": {\"unit_filename\": \"s.slice\"}}"
+      ~contents:"{\"version\": 2, \"slice\": {}}"
   in
   Fun.protect
     ~finally:(fun () -> try Sys.remove path with _ -> ())
@@ -145,9 +145,8 @@ let test_spec_load_missing_kind () =
   let path =
     Test_helpers.write_temp_file ~prefix:"pctl-nokind-"
       ~contents:
-        "{\"version\": 1, \"slice\": {\"unit_filename\": \"s.slice\"}, \
-         \"services\": {\"pg\": {\"unit_filename\": \"pg.service\", \
-         \"service_config\": {}}}}"
+        "{\"version\": 2, \"slice\": {}, \
+         \"services\": {\"pg\": {\"service_config\": {}}}}"
   in
   Fun.protect
     ~finally:(fun () -> try Sys.remove path with _ -> ())
@@ -159,31 +158,12 @@ let test_spec_load_missing_kind () =
           | _ -> false)
         (fun () -> Spec.load ~path))
 
-let test_spec_load_missing_unit_filename () =
-  let path =
-    Test_helpers.write_temp_file ~prefix:"pctl-nouf-"
-      ~contents:
-        "{\"version\": 1, \"slice\": {\"unit_filename\": \"s.slice\"}, \
-         \"services\": {\"pg\": {\"kind\": \"simple\", \
-         \"service_config\": {}}}}"
-  in
-  Fun.protect
-    ~finally:(fun () -> try Sys.remove path with _ -> ())
-    (fun () ->
-      check_raises_pctl ~name:"missing unit_filename"
-        ~predicate:(function
-          | Spec_parse { msg; _ } ->
-              Test_helpers.contains_substring msg "unit_filename"
-          | _ -> false)
-        (fun () -> Spec.load ~path))
-
 let test_spec_load_missing_service_config () =
   let path =
     Test_helpers.write_temp_file ~prefix:"pctl-nosc-"
       ~contents:
-        "{\"version\": 1, \"slice\": {\"unit_filename\": \"s.slice\"}, \
-         \"services\": {\"pg\": {\"kind\": \"simple\", \
-         \"unit_filename\": \"pg.service\"}}}"
+        "{\"version\": 2, \"slice\": {}, \
+         \"services\": {\"pg\": {\"kind\": \"simple\"}}}"
   in
   Fun.protect
     ~finally:(fun () -> try Sys.remove path with _ -> ())
@@ -199,9 +179,8 @@ let test_spec_load_bad_service_config_value () =
   let path =
     Test_helpers.write_temp_file ~prefix:"pctl-badsc-"
       ~contents:
-        "{\"version\": 1, \"slice\": {\"unit_filename\": \"s.slice\"}, \
+        "{\"version\": 2, \"slice\": {}, \
          \"services\": {\"pg\": {\"kind\": \"simple\", \
-         \"unit_filename\": \"pg.service\", \
          \"service_config\": {\"ExecStart\": 42}}}}"
   in
   Fun.protect
@@ -218,9 +197,9 @@ let test_spec_load_bad_kind () =
   let path =
     Test_helpers.write_temp_file ~prefix:"pctl-badkind-"
       ~contents:
-        "{\"version\": 1, \"slice\": {\"unit_filename\": \"s.slice\"}, \
+        "{\"version\": 2, \"slice\": {}, \
          \"services\": {\"pg\": {\"kind\": \"zombie\", \
-         \"unit_filename\": \"pg.service\", \"service_config\": {}}}}"
+         \"service_config\": {}}}}"
   in
   Fun.protect
     ~finally:(fun () -> try Sys.remove path with _ -> ())
@@ -248,6 +227,7 @@ let () =
           test_case "bad JSON -> Spec_parse" `Quick test_spec_load_parse_error;
           test_case "version=99 -> Spec_unknown_version" `Quick
             test_spec_load_unknown_version;
+          test_case "v1 -> Spec_unknown_version" `Quick test_spec_load_v1_rejected;
           test_case "missing version -> Spec_parse" `Quick
             test_spec_load_missing_version;
           test_case "missing slice -> Spec_parse" `Quick
@@ -256,8 +236,6 @@ let () =
             test_spec_load_missing_services;
           test_case "missing kind -> Spec_parse" `Quick
             test_spec_load_missing_kind;
-          test_case "missing unit_filename -> Spec_parse" `Quick
-            test_spec_load_missing_unit_filename;
           test_case "missing service_config -> Spec_parse" `Quick
             test_spec_load_missing_service_config;
           test_case "non-string service_config value -> Spec_parse" `Quick

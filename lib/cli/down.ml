@@ -52,7 +52,7 @@ let run ~sw ~env ?path ?(quiet = false) () : int =
         let slice_unit = Printf.sprintf "pctl-%s.slice" project_id_s in
         stop_and_reload ~env ~sw ~slice_unit;
         (* Delete unit files + drop-in dirs. *)
-        Install.Install.remove_units ~id (List.map fst existing_manifest);
+        Install.Install.remove_units (List.map fst existing_manifest);
         (* Final daemon_reload so systemd forgets the now-gone units. *)
         daemon_reload ~env ~sw;
         State.Projects.replace_manifest conn ~project_id:project_id_s

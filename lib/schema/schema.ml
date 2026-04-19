@@ -196,8 +196,8 @@ type host = Host.t
 (* Records                                                             *)
 (* ------------------------------------------------------------------ *)
 
-(* manifest — keyed by raw unit_filename string (may still contain
- * @@PROJECT@@ placeholders; substitution happens at install time). *)
+(* manifest — keyed by the final on-disk unit filename
+ * (pctl-<id>-<service>.service or pctl-<id>.slice). No placeholders. *)
 type manifest = (string * string) list
 
 type plan_row = {
@@ -215,18 +215,20 @@ type probe = {
 
 type workspace_spec = { cwd : bool; writable : bool }
 
+(* Service and slice specs carry only logical data. Unit filenames are
+ * derived at install/render time from the project id + service name:
+ *   slice    → pctl-<id>.slice
+ *   service  → pctl-<id>-<service name>.service *)
 type service_spec = {
   name : string;
   kind : kind;
   depends_on : string list;
   workspace : workspace_spec;
   probe : probe option;
-  unit_filename : string;
   service_config : (string * string) list;
 }
 
 type slice_spec = {
-  unit_filename : string;
   slice_config : (string * string) list;
 }
 
@@ -235,6 +237,14 @@ type spec = {
   slice : slice_spec;
   services : service_spec StringMap.t;
 }
+
+(* Canonical filename derivations — one source of truth used by Render,
+ * Install, and every test/harness that needs the concrete names. *)
+let slice_filename ~(id : project_id) : string =
+  Printf.sprintf "pctl-%s.slice" (Project_id.to_string id)
+
+let service_filename ~(id : project_id) ~(service_name : string) : string =
+  Printf.sprintf "pctl-%s-%s.service" (Project_id.to_string id) service_name
 
 (* result_row wire format — parsed by tuor's
  * scripts/collect-pctl-artifacts.nu, which only accesses fields by name

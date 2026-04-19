@@ -23,7 +23,6 @@ let () =
         [
           ("Type", "simple");
           ("ExecStart", Printf.sprintf "%s infinity" sleep_bin);
-          ("Slice", "pctl-@@PROJECT@@.slice");
         ];
       workspace = None;
     }

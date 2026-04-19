@@ -114,17 +114,14 @@ let run_wait_all ~env ~sw:_ ~id ~host ~spec ~timeout_seconds :
       Systemctl.Dbus.close t;
       rows)
 
-(* Resolve the spec.json to use for readiness. Priority:
- *   1. The project's stored [store_tree] if still on disk.
- *   2. A no-probe synthetic spec derived from the manifest (so we can
- *      still wait on unit-state even if store_tree is gone).
- *
- * The synthetic fallback mirrors Nushell's `store_tree missing → {}`
- * branch: every service ends up in the no-probe wait path. *)
-let rec spec_for_results (conn : State.Db.t) ~project_id_s : Schema.spec =
-  let row = State.Projects.get_by_id conn ~id:project_id_s in
-  match row with
-  | None ->
+(* Resolve the spec.json to use for readiness. We pull it directly from
+ * the [projects.spec_json] blob persisted at up/reload time — the
+ * on-disk store_tree may have been garbage-collected since, but the
+ * DB blob is session-scoped and cleared by [Session.reset] at the next
+ * boot, so the bytes here always match the running services. *)
+let spec_for_results (conn : State.Db.t) ~project_id_s : Schema.spec =
+  match State.Projects.get_by_id conn ~id:project_id_s with
+  | None | Some { spec_json = None | Some ""; _ } ->
       raise
         (Schema.Pctl_error
            (Schema.Registry_io
@@ -132,71 +129,9 @@ let rec spec_for_results (conn : State.Db.t) ~project_id_s : Schema.spec =
                 id = project_id_s;
                 reason = "project is not registered — run `pctl up` first";
               }))
-  | Some r -> (
-      let store_tree =
-        match r.store_tree with Some p when p <> "" -> Some p | _ -> None
-      in
-      match store_tree with
-      | Some p when Sys.file_exists p -> (
-          try Spec.load ~path:p
-          with Schema.Pctl_error _ ->
-            (* Fall through to manifest-based synthetic spec. *)
-            spec_from_manifest conn ~project_id_s)
-      | _ -> spec_from_manifest conn ~project_id_s)
-
-and spec_from_manifest (conn : State.Db.t) ~project_id_s : Schema.spec =
-  let manifest =
-    State.Projects.load_manifest conn ~project_id:project_id_s
-  in
-  (* Service entries are unit_filenames ending in .service; strip the
-   * pctl-<id>- prefix and .service suffix to get the service name. *)
-  let is_service (uf, _) =
-    let n = String.length uf in
-    n > 8 && String.sub uf (n - 8) 8 = ".service"
-  in
-  let prefix = Printf.sprintf "pctl-%s-" project_id_s in
-  let plen = String.length prefix in
-  let services =
-    List.filter is_service manifest
-    |> List.filter_map (fun (uf, _) ->
-           let n = String.length uf in
-           if n > plen + 8 && String.sub uf 0 plen = prefix then
-             let base =
-               String.sub uf plen (n - plen - 8)
-             in
-             Some (base, uf)
-           else None)
-    |> List.fold_left
-         (fun acc (name, uf) ->
-           let svc : Schema.service_spec =
-             {
-               name;
-               kind = Schema.Simple;
-               depends_on = [];
-               workspace = { cwd = false; writable = false };
-               probe = None;
-               unit_filename = uf;
-               service_config = [];
-             }
-           in
-           Schema.StringMap.add name svc acc)
-         Schema.StringMap.empty
-  in
-  let slice_uf =
-    (* Pick the .slice entry from the manifest (expected unique). *)
-    List.find_opt
-      (fun (uf, _) ->
-        let n = String.length uf in
-        n > 6 && String.sub uf (n - 6) 6 = ".slice")
-      manifest
-    |> Option.map fst
-    |> Option.value ~default:(Printf.sprintf "pctl-%s.slice" project_id_s)
-  in
-  {
-    Schema.version = 1;
-    slice = { unit_filename = slice_uf; slice_config = [] };
-    services;
-  }
+  | Some { spec_json = Some blob; _ } ->
+      Spec.parse ~path:(project_id_s ^ ":spec_json")
+        (Yojson.Safe.from_string blob)
 
 let run ~sw ~env ?path ?(timeout = 600) ?(json = false) () : int =
   run_with_errors (fun () ->

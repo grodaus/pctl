@@ -8,12 +8,13 @@ let () =
   Harness.check_rc_zero ~label:"up" (Harness.up ~scratch);
   let id = Harness.project_id scratch in
   let id_s = Schema.Project_id.to_string id in
-  Harness.assert_unit_exists ~id Harness.slice_filename;
-  Harness.assert_unit_exists ~id (Harness.service_filename "web");
-  Harness.assert_unit_exists ~id (Harness.service_filename "api");
+  Harness.assert_unit_exists (Harness.slice_filename_for ~id);
+  Harness.assert_unit_exists (Harness.service_filename_for ~id ~service_name:"web");
+  Harness.assert_unit_exists (Harness.service_filename_for ~id ~service_name:"api");
   (* Drop-ins: web's drop-in exposes PCTL_ID/PCTL_HOST. *)
   let web_dropin =
-    Harness.read_dropin ~id ~unit_filename:(Harness.service_filename "web")
+    Harness.read_dropin
+      ~unit_filename:(Harness.service_filename_for ~id ~service_name:"web")
   in
   Harness.assert_contains ~label:"web dropin has PCTL_ID" web_dropin
     (Printf.sprintf "PCTL_ID=%s" id_s);

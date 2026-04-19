@@ -17,7 +17,6 @@ let () =
             Printf.sprintf
               "%s -c 'exec %s -c \"while true; do sleep 3600; done\"'"
               bash bash );
-          ("Slice", "pctl-@@PROJECT@@.slice");
         ];
       workspace = None;
     }

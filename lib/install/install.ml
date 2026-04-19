@@ -1,7 +1,8 @@
 (* Install — render the spec into user.control, create drop-ins, compute
  * the manifest.
  *
- *   1. Unit filename has @@PROJECT@@ substituted to the project id.
+ *   1. Unit filenames are derived from the project id + service name
+ *      (Schema.slice_filename / Schema.service_filename).
  *   2. .slice/.service files land directly in user.control/.
  *   3. Each service gets a drop-in at "<unit>.d/pctl-runtime.conf"
  *      carrying PCTL_HOST + PCTL_ID. Slices get no drop-in (Environment=
@@ -35,27 +36,17 @@ module Paths = struct
                 }))
     | Some rt -> Filename.concat rt (Filename.concat "systemd" "user.control")
 
-  (* Substitute @@PROJECT@@ in unit basenames. Filenames never contain
-   * @@PROJECT_PATH@@ (it would be nonsense in a filename); that rule
-   * is Render's concern. *)
-  let substitute_id ~(id : Schema.project_id) (basename : string) : string =
-    Render.replace_all ~needle:"@@PROJECT@@"
-      ~replacement:(Schema.Project_id.to_string id)
-      basename
+  (* Absolute paths for a unit's main file, its drop-in dir, and its
+   * drop-in config file. All take the concrete unit filename
+   * (pctl-<id>.slice, pctl-<id>-<svc>.service) — no placeholder tokens. *)
+  let unit_path ~unit_filename : string =
+    Filename.concat user_control unit_filename
 
-  let slice_path ~(id : Schema.project_id) ~(unit_filename : string) : string =
-    Filename.concat user_control (substitute_id ~id unit_filename)
+  let dropin_dir ~unit_filename : string =
+    unit_path ~unit_filename ^ ".d"
 
-  let service_path ~(id : Schema.project_id) ~(unit_filename : string) : string
-      =
-    Filename.concat user_control (substitute_id ~id unit_filename)
-
-  let dropin_dir ~(id : Schema.project_id) ~(unit_filename : string) : string =
-    (substitute_id ~id unit_filename |> Filename.concat user_control) ^ ".d"
-
-  let dropin_file ~(id : Schema.project_id) ~(unit_filename : string) : string
-      =
-    Filename.concat (dropin_dir ~id ~unit_filename) "pctl-runtime.conf"
+  let dropin_file ~unit_filename : string =
+    Filename.concat (dropin_dir ~unit_filename) "pctl-runtime.conf"
 end
 
 (* ------------------------------------------------------------------ *)
@@ -118,17 +109,12 @@ module Install = struct
   (* Ensure user.control/ exists. *)
   let ensure_control_dir () = mkdir_p Paths.user_control
 
-  (* Write one slice + its drop-in, return (unit_filename, sha256). *)
-  let write_slice ~(spec : Schema.spec) ~(id : Schema.project_id)
-      ~project_path : string * string =
-    let bytes = Render.slice ~slice:spec.slice ~id ~project_path in
-    let unit_filename =
-      Paths.substitute_id ~id spec.slice.unit_filename
-    in
-    let path =
-      Paths.slice_path ~id ~unit_filename:spec.slice.unit_filename
-    in
-    write_file ~path ~bytes;
+  (* Write one slice, return (unit_filename, sha256). *)
+  let write_slice ~(spec : Schema.spec) ~(id : Schema.project_id) :
+      string * string =
+    let bytes = Render.slice ~slice:spec.slice ~id in
+    let unit_filename = Schema.slice_filename ~id in
+    write_file ~path:(Paths.unit_path ~unit_filename) ~bytes;
     (unit_filename, sha256_hex bytes)
 
   (* Write one service + its drop-in. *)
@@ -136,19 +122,19 @@ module Install = struct
       ~(id : Schema.project_id) ~(host : Schema.host) ~project_path :
       string * string =
     let bytes = Render.service ~service ~id ~project_path in
-    let unit_filename = Paths.substitute_id ~id service.unit_filename in
-    let path = Paths.service_path ~id ~unit_filename:service.unit_filename in
-    write_file ~path ~bytes;
-    let dropin =
-      Paths.dropin_file ~id ~unit_filename:service.unit_filename
+    let unit_filename =
+      Schema.service_filename ~id ~service_name:service.name
     in
-    write_file ~path:dropin ~bytes:(service_dropin_body ~id ~host);
+    write_file ~path:(Paths.unit_path ~unit_filename) ~bytes;
+    write_file
+      ~path:(Paths.dropin_file ~unit_filename)
+      ~bytes:(service_dropin_body ~id ~host);
     (unit_filename, sha256_hex bytes)
 
   let write_units ~(spec : Schema.spec) ~(id : Schema.project_id)
       ~project_path ~(host : Schema.host) : Schema.manifest =
     ensure_control_dir ();
-    let slice_entry = write_slice ~spec ~id ~project_path in
+    let slice_entry = write_slice ~spec ~id in
     let service_entries =
       Schema.StringMap.bindings spec.services
       |> List.map (fun (_, svc) ->
@@ -157,17 +143,11 @@ module Install = struct
     slice_entry :: service_entries
     |> List.sort (fun (a, _) (b, _) -> String.compare a b)
 
-  let remove_units ~(id : Schema.project_id) (unit_filenames : string list) :
-      unit =
+  let remove_units (unit_filenames : string list) : unit =
     List.iter
-      (fun uf ->
-        (* uf in the manifest already has @@PROJECT@@ substituted to the id.
-         * But to be defensive, substitute again — if it's already substituted,
-         * it's a no-op. *)
-        let basename = Paths.substitute_id ~id uf in
-        let path = Filename.concat Paths.user_control basename in
-        let d = path ^ ".d" in
-        rm_rf d;
-        (try Sys.remove path with Sys_error _ -> ()))
+      (fun unit_filename ->
+        rm_rf (Paths.dropin_dir ~unit_filename);
+        (try Sys.remove (Paths.unit_path ~unit_filename)
+         with Sys_error _ -> ()))
       unit_filenames
 end

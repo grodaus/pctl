@@ -159,7 +159,7 @@ module Make (M : Systemctl.S) = struct
       ~(overall_deadline_mono : Mtime.t) : Schema.result_row =
     let start_mono = mono_now env in
     let service_unit =
-      Install.Paths.substitute_id ~id service.Schema.unit_filename
+      Schema.service_filename ~id ~service_name:service.Schema.name
     in
     let service_deadline =
       match service.Schema.probe with

@@ -6,10 +6,16 @@
 # with yants, merges sandbox defaults into each service's `service_config`,
 # and emits a single spec.json via `pkgs.writeText`.
 #
-# The OCaml CLI reads this spec.json at `up` / `reload` time, substitutes
-# @@PROJECT@@ / @@PROJECT_PATH@@ at install time, renders unit bytes, and
-# writes them into user.control. Nix never renders unit files any more —
-# that responsibility moved into `lib/render/` on the OCaml side.
+# The OCaml CLI reads this spec.json at `up` / `reload` time, derives
+# concrete unit filenames from the project id, renders unit bytes, and
+# writes them into user.control. Nix never renders unit files — that
+# responsibility lives in `lib/render/` on the OCaml side.
+#
+# v2 schema: no `@@PROJECT@@` / `@@PROJECT_PATH@@` placeholders. The spec
+# is pure logical data. Workspace-derived keys (WorkingDirectory,
+# BindPaths, ProtectHome) are produced by the OCaml renderer from
+# `workspace.cwd` / `workspace.writable`; the Nix side emits only the
+# workspace flags.
 #
 # Return value: the `pkgs.writeText` derivation itself. Its outPath IS the
 # spec.json file (writeText semantics). Consumers like tuor write
@@ -24,8 +30,6 @@
   types,
 }: {services}: let
   inherit (pkgs) lib;
-
-  placeholder = "@@PROJECT@@";
 
   sandboxDefaults = import ./sandbox-defaults.nix;
 
@@ -48,8 +52,7 @@
 
   # Inferred `kind` (Type= in systemd parlance) is derived from the
   # user's explicit serviceConfig.Type if present, else defaults to
-  # "simple" — matches the behaviour in render.nix that OCaml is
-  # replacing. Plan schema v1 lists the accepted values.
+  # "simple".
   inferKind = svc: let
     explicit = (svc.serviceConfig or {}).Type or null;
   in
@@ -57,32 +60,10 @@
     then explicit
     else "simple";
 
-  # Build the workspace-derived service_config fragment (BindPaths,
-  # ProtectHome, WorkingDirectory). Keeps @@PROJECT_PATH@@ placeholder
-  # intact — OCaml substitutes at install time.
-  workspaceConfig = svc: let
-    ws = svc.workspace or {};
-    cwd = ws.cwd or false;
-    writable = ws.writable or false;
-  in
-    lib.optionalAttrs cwd {
-      WorkingDirectory = "@@PROJECT_PATH@@";
-    }
-    // lib.optionalAttrs writable {
-      ProtectHome = "tmpfs";
-      # BindPaths is list-valued in systemd; stringify as a single
-      # space-separated string so OCaml's service_config:
-      # `(string * string) list` consumer sees a plain scalar. OCaml's
-      # renderer expands this back to one line per path at ini-write time.
-      BindPaths = "@@PROJECT_PATH@@";
-    };
-
-  # Merge sandbox defaults + command/env/limits + workspace + user's
-  # explicit serviceConfig (last writer wins). Produces the final
-  # string-keyed map OCaml consumes as-is — no further merging on the
-  # OCaml side. All values coerced to strings so the JSON shape is
-  # `{ "K": "V" }` everywhere (OCaml reads as (string * string) list,
-  # plan "Internal schema").
+  # Merge sandbox defaults + command/env/limits + user's explicit
+  # serviceConfig (last writer wins). Produces the final string-keyed
+  # map OCaml consumes as-is. Workspace-derived keys are NOT included
+  # here — OCaml renders them from `workspace` at install time.
   buildServiceConfig = svc: let
     envAttrs = svc.env or {};
     envLines = lib.mapAttrsToList (k: v: "${k}=${v}") envAttrs;
@@ -102,7 +83,6 @@
       // lib.optionalAttrs (svc ? restart) {Restart = svc.restart;}
       // lib.optionalAttrs (limits ? memoryMax) {MemoryMax = limits.memoryMax;}
       // lib.optionalAttrs (limits ? cpuQuota) {CPUQuota = limits.cpuQuota;}
-      // (workspaceConfig svc)
       // (svc.serviceConfig or {});
 
     # Always force Type= — even if the user didn't set one — so OCaml's
@@ -120,7 +100,7 @@
     }
     else null;
 
-  buildService = svcName: svc: {
+  buildService = _svcName: svc: {
     kind = inferKind svc;
     depends_on = svc.dependsOn or [];
     workspace = {
@@ -128,18 +108,16 @@
       writable = (svc.workspace or {}).writable or false;
     };
     probe = buildProbe svc;
-    unit_filename = "pctl-${placeholder}-${svcName}.service";
     service_config = buildServiceConfig svc;
   };
 
   servicesObj = lib.mapAttrs buildService depsChecked;
 
   spec = {
-    version = 1;
+    version = 2;
     slice = {
-      unit_filename = "pctl-${placeholder}.slice";
       # Slice-level config stays minimal today; sandbox hardening is
-      # per-service. Plan schema v1 section of the rewrite doc defines
+      # per-service. Plan schema v2 section of the rewrite doc defines
       # the shape.
       slice_config = {};
     };

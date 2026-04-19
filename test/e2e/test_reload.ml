@@ -28,8 +28,7 @@ let () =
           ("Type", "simple");
           ( "ExecStart",
             Printf.sprintf "%s infinity" "/run/current-system/sw/bin/sleep" );
-          ("Slice", "pctl-@@PROJECT@@.slice");
-          ("Description", "web-v2 @@PROJECT@@");
+          ("Description", "web-v2");
         ];
       workspace = None;
       probe = None;
@@ -53,7 +52,8 @@ let () =
   (* Disk content reflects the new body. *)
   let web_disk =
     match
-      Harness.read_unit ~id ~unit_filename:(Harness.service_filename "web")
+      Harness.read_unit
+        ~unit_filename:(Harness.service_filename_for ~id ~service_name:"web")
     with
     | Some c -> c
     | None -> Alcotest.fail "web unit file missing post-reload"

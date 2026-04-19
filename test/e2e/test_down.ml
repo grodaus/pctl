@@ -13,9 +13,9 @@ let () =
   Harness.assert_unit_active web;
   Harness.check_rc_zero ~label:"down" (Harness.down ~scratch);
   (* Unit files should be gone. *)
-  Harness.assert_unit_gone ~id Harness.slice_filename;
-  Harness.assert_unit_gone ~id (Harness.service_filename "web");
-  Harness.assert_dropin_gone ~id (Harness.service_filename "web");
+  Harness.assert_unit_gone (Harness.slice_filename_for ~id);
+  Harness.assert_unit_gone (Harness.service_filename_for ~id ~service_name:"web");
+  Harness.assert_dropin_gone (Harness.service_filename_for ~id ~service_name:"web");
   (* Nothing is active. *)
   Harness.assert_unit_inactive slice;
   Harness.assert_unit_inactive web;

@@ -7,3 +7,4 @@ Type=simple
 Restart=on-failure
 StateDirectory=pctl-demo_abc12345-pg
 Environment=PGDATA=/home/me/project
+Slice=pctl-demo_abc12345.slice

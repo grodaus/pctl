@@ -76,6 +76,16 @@ let iso8601_now () : string =
 let read_boot_id () : string =
   try State.Session.read_boot_id () with _ -> ""
 
+(* Slurp a whole file into a string. Used by Up / Reload to persist the
+ * spec.json bytes into the projects registry. *)
+let read_file path : string =
+  let ic = open_in path in
+  Fun.protect
+    ~finally:(fun () -> close_in ic)
+    (fun () ->
+      let n = in_channel_length ic in
+      really_input_string ic n)
+
 (* Thin error runner: wrap a thunk, convert Pctl_error -> (prints, exit code).
  * Uncaught exceptions get exit 1 + a generic message. *)
 let run_with_errors (f : unit -> unit) : int =
