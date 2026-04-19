@@ -25,81 +25,57 @@
 
 open Common
 
-let render_class = function
-  | Schema.Live -> "live"
-  | Schema.Orphan -> "orphan"
-  | Schema.Unknown -> "unknown"
+(* Wire-format row — one per registered project. Consumers (tuor,
+ * humans, tests) read these by field name; order matches the Nushell
+ * `list` command for byte-compat. *)
+type row = {
+  id : string;
+  path : string;
+  host : string option;
+  started_at : string option;
+  class_ : string; [@key "class"]
+}
+[@@deriving to_yojson]
 
-let render_json (rows : (State.Projects.t * Schema.class_) list) : string =
-  let escape s =
-    let buf = Buffer.create (String.length s + 2) in
-    String.iter
-      (fun c ->
-        match c with
-        | '"' -> Buffer.add_string buf "\\\""
-        | '\\' -> Buffer.add_string buf "\\\\"
-        | '\n' -> Buffer.add_string buf "\\n"
-        | '\r' -> Buffer.add_string buf "\\r"
-        | '\t' -> Buffer.add_string buf "\\t"
-        | c -> Buffer.add_char buf c)
-      s;
-    Buffer.contents buf
-  in
-  let opt_str = function
-    | None -> "null"
-    | Some s -> Printf.sprintf "\"%s\"" (escape s)
-  in
-  let row_json ((r : State.Projects.t), (cls : Schema.class_)) =
-    Printf.sprintf
-      "{\"id\":\"%s\",\"path\":\"%s\",\"host\":%s,\"started_at\":%s,\"class\":\"%s\"}"
-      (escape r.id) (escape r.path) (opt_str r.host) (opt_str r.started_at)
-      (render_class cls)
-  in
-  "[" ^ String.concat "," (List.map row_json rows) ^ "]"
+let row_of (r : State.Projects.t) (cls : Schema.class_) : row =
+  { id = r.id; path = r.path; host = r.host; started_at = r.started_at;
+    class_ = Schema.class_to_string cls }
 
-let render_table (rows : (State.Projects.t * Schema.class_) list) : string =
+let render_json rows : string =
+  `List (List.map (fun (r, c) -> row_to_yojson (row_of r c)) rows)
+  |> Yojson.Safe.to_string
+
+let render_table rows : string =
   if rows = [] then ""
   else
     let header = [ "id"; "path"; "host"; "started_at"; "class" ] in
-    let to_row ((r : State.Projects.t), cls) =
+    let text_row (r, c) =
+      let row = row_of r c in
       [
-        r.id;
-        r.path;
-        Option.value r.host ~default:"-";
-        Option.value r.started_at ~default:"-";
-        render_class cls;
+        row.id;
+        row.path;
+        Option.value row.host ~default:"-";
+        Option.value row.started_at ~default:"-";
+        row.class_;
       ]
     in
-    let all_rows = header :: List.map to_row rows in
-    (* Column widths. *)
-    let ncols = List.length header in
-    let widths = Array.make ncols 0 in
-    List.iter
-      (fun row ->
-        List.iteri
-          (fun i cell ->
-            if String.length cell > widths.(i) then widths.(i) <- String.length cell)
-          row)
-      all_rows;
-    let buf = Buffer.create 256 in
-    List.iter
-      (fun row ->
-        List.iteri
-          (fun i cell ->
-            let w = widths.(i) in
-            let pad = String.make (max 0 (w - String.length cell)) ' ' in
-            Buffer.add_string buf cell;
-            Buffer.add_string buf pad;
-            if i < ncols - 1 then Buffer.add_string buf "  ")
-          row;
-        Buffer.add_char buf '\n')
-      all_rows;
-    Buffer.contents buf
+    let body = List.map text_row rows in
+    let widths =
+      List.fold_left
+        (fun acc row ->
+          List.map2 (fun w cell -> max w (String.length cell)) acc row)
+        (List.map String.length header)
+        body
+    in
+    let emit_row row =
+      List.map2 (fun w cell -> Printf.sprintf "%-*s" w cell) widths row
+      |> String.concat "  "
+    in
+    List.map emit_row (header :: body)
+    |> List.map (fun s -> s ^ "\n")
+    |> String.concat ""
 
-let run ~sw ~env ?(json = false) ?(table = false) () : int =
-  let _ = table in
-  (* --table and default both fall through to render_table. Passing both is
-   * undefined in Nushell; we prefer --json. *)
+let run ~sw ~env ?(json = false) () : int =
   run_with_errors (fun () ->
       with_connection ~env ~sw (fun conn ->
           let rows = Gc.report ~conn in

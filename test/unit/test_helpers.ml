@@ -19,17 +19,12 @@ let spec_fixture name = Filename.concat "fixtures/spec" (name ^ ".json")
  * spec-loader tests to verify the offending field name appears in the
  * error text. *)
 let contains_substring haystack needle =
-  let hl = String.length haystack in
-  let nl = String.length needle in
-  if nl = 0 then true
-  else if nl > hl then false
-  else
-    let rec loop i =
-      if i > hl - nl then false
-      else if String.sub haystack i nl = needle then true
-      else loop (i + 1)
-    in
-    loop 0
+  needle = ""
+  ||
+  try
+    ignore (Str.search_forward (Str.regexp_string needle) haystack 0);
+    true
+  with Not_found -> false
 
 (* Write a string to a fresh temp file; return its path. Tests that need
  * hand-crafted malformed input (the good-path fixtures come from

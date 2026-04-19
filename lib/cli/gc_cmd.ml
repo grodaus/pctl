@@ -14,8 +14,7 @@
 
 open Common
 
-let run ~sw ~env ?(yes = false) ?(json = false) ?(table = false) () : int =
-  let _ = table in
+let run ~sw ~env ?(yes = false) ?(json = false) () : int =
   run_with_errors (fun () ->
       with_connection ~env ~sw (fun conn ->
           if yes then begin

@@ -43,41 +43,51 @@ let class_of_row ~(boot_id : string) (row : State.Projects.t) : Schema.class_ =
  * stop the matching units on [handle]. Tolerates every failure; logs
  * to stderr so the user sees progress. *)
 module Make (M : Systemctl.S) = struct
+  (* Catches used throughout remove_project — gc sweeps MUST be
+   * best-effort; a stale row with no units on disk shouldn't block
+   * removal of the DB row. We still narrow from [_] to the specific
+   * failure modes we've observed: systemd not running (Unix_error),
+   * pctl-tracked errors (Pctl_error), and caqti wrappers (Failure). *)
+  let ignore_best_effort f =
+    try f ()
+    with Failure _ | Unix.Unix_error _ | Schema.Pctl_error _ -> ()
+
   let remove_project ~(conn : State.Db.t) ~(handle : M.t)
       (row : State.Projects.t) : unit =
     let id_s = row.id in
     (* Load the stored manifest so we stop + delete the right unit files. *)
     let manifest =
       try State.Projects.load_manifest conn ~project_id:id_s
-      with _ -> []
+      with Failure _ | Schema.Pctl_error _ -> []
     in
     let slice_unit = Printf.sprintf "pctl-%s.slice" id_s in
-    (try M.stop_unit handle ~unit:slice_unit with _ -> ());
+    ignore_best_effort (fun () -> M.stop_unit handle ~unit:slice_unit);
     List.iter
-      (fun (uf, _) -> try M.stop_unit handle ~unit:uf with _ -> ())
+      (fun (uf, _) ->
+        ignore_best_effort (fun () -> M.stop_unit handle ~unit:uf))
       manifest;
-    (try M.daemon_reload handle with _ -> ());
+    ignore_best_effort (fun () -> M.daemon_reload handle);
     (* Remove the actual unit files on disk. [remove_units] is tolerant
      * of non-existence already. *)
-    (try
-       match Schema.Project_id.of_string_opt id_s with
-       | Some id ->
-           let filenames = List.map fst manifest in
-           Install.Install.remove_units ~id filenames;
-           (* Also try to remove the slice file — some paths through the
-            * codebase store the slice in the manifest, but be defensive. *)
-           let slice_filename =
-             Printf.sprintf "pctl-@@PROJECT@@.slice"
-           in
-           Install.Install.remove_units ~id [ slice_filename ]
-       | None -> ()
-     with _ -> ());
-    (try M.daemon_reload handle with _ -> ());
+    ignore_best_effort (fun () ->
+        match Schema.Project_id.of_string_opt id_s with
+        | Some id ->
+            let filenames = List.map fst manifest in
+            Install.Install.remove_units ~id filenames;
+            (* Also try to remove the slice file — some paths through
+             * the codebase store the slice in the manifest, but be
+             * defensive. *)
+            let slice_filename =
+              Printf.sprintf "pctl-%s.slice" id_s
+            in
+            Install.Install.remove_units ~id [ slice_filename ]
+        | None -> ());
+    ignore_best_effort (fun () -> M.daemon_reload handle);
     (* Wipe the manifest + project row. *)
-    (try
-       State.Projects.replace_manifest conn ~project_id:id_s ~rows:[]
-     with _ -> ());
-    try State.Projects.delete_by_id conn ~id:id_s with _ -> ()
+    ignore_best_effort (fun () ->
+        State.Projects.replace_manifest conn ~project_id:id_s ~rows:[]);
+    ignore_best_effort (fun () ->
+        State.Projects.delete_by_id conn ~id:id_s)
 
   (* Opportunistic sweep — called at the top of up/reload/down/restart
    * (inside with_connection). Iterates every project and removes those

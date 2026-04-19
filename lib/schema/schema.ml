@@ -98,6 +98,7 @@ type error =
   | Probe_timeout of { service : string; timeout_ms : int }
   | Identity_invalid of { path : string; reason : string }
   | Registry_io of { id : string; reason : string }
+  | Journalctl_failed of { unit_ : string; exit_code : int }
 
 exception Pctl_error of error
 
@@ -330,6 +331,8 @@ let render_error = function
       Printf.sprintf "invalid identity for '%s': %s" path reason
   | Registry_io { id; reason } ->
       Printf.sprintf "registry I/O failure for project %s: %s" id reason
+  | Journalctl_failed { unit_; exit_code } ->
+      Printf.sprintf "journalctl -u %s exited %d" unit_ exit_code
 
 (* Exit-code mapping (stable across pctl releases, comment must stay in
  * sync with man page / release notes once those exist):
@@ -350,3 +353,8 @@ let error_exit_code = function
   | Install_failed _ | Registry_io _ -> 4
   | Bus_connect_failed _ | Unit_op_failed _ -> 5
   | Probe_exec_failed _ | Probe_timeout _ -> 6
+  (* Journalctl's own exit code bubbles up — we don't override it with
+   * a bucket. Use 0 here so [error_exit_code] is total; [Logs.run]
+   * short-circuits and calls [exit] with the journalctl exit code
+   * directly instead of going through [run_with_errors]. *)
+  | Journalctl_failed { exit_code; _ } -> exit_code

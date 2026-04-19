@@ -26,8 +26,6 @@
  * spanning the duration of the single [wait_service] invocation.
  *)
 
-module Schema = Schema
-
 (* ------------------------------------------------------------------ *)
 (* Strategy — how [wait_all] handles non-Active outcomes.               *)
 (* ------------------------------------------------------------------ *)
@@ -80,14 +78,12 @@ let mono_add_seconds ~(base : Mtime.t) ~(seconds : int) : Mtime.t =
  * which merges with the parent env. *)
 let build_child_env ~(id : Schema.project_id) ~(host : Schema.host) :
     string array =
-  let has_prefix p s =
-    String.length s >= String.length p
-    && String.sub s 0 (String.length p) = p
-  in
   let parent =
     Unix.environment () |> Array.to_list
     |> List.filter (fun s ->
-           not (has_prefix "PCTL_ID=" s || has_prefix "PCTL_HOST=" s))
+           not
+             (String.starts_with ~prefix:"PCTL_ID=" s
+             || String.starts_with ~prefix:"PCTL_HOST=" s))
   in
   Array.of_list
     (Printf.sprintf "PCTL_ID=%s" (Schema.Project_id.to_string id)
@@ -291,43 +287,29 @@ module Make (M : Systemctl.S) = struct
       wait_service ~sw:service_sw ~env ~handle ~id ~host ~service_name:name
         ~service:svc ~overall_deadline_mono
     in
-    let placeholder ~(state : Schema.result_state) name : Schema.result_row =
-      { Schema.name; state; elapsed = 0L; kind = `Unit_state }
-    in
-    let assemble ~missing_state =
-      List.map
-        (fun (name, _) ->
-          match Hashtbl.find_opt results name with
-          | Some r -> r
-          | None -> placeholder ~state:missing_state name)
+    let assemble () =
+      (* Every fiber writes exactly one row into [results]; names that
+       * are missing here indicate a supervisor-level cancellation. In
+       * `Throw_first` the first non-Active outcome cancels siblings
+       * before they record, so we just drop them. *)
+      List.filter_map
+        (fun (name, _) -> Hashtbl.find_opt results name)
         ordered
     in
     match strategy with
     | `Collect_all ->
-        (* Fork one promise per service; await all. Exceptions inside
-         * a fiber are converted to a [`Timed_out] row so the caller
-         * never sees a partial list. *)
+        (* Fork one promise per service; await all. *)
         let promises =
           List.map
             (fun entry ->
               Eio.Fiber.fork_promise ~sw (fun () ->
-                  let name = fst entry in
-                  let row =
-                    try run_one ~service_sw:sw entry
-                    with Schema.Pctl_error _ ->
-                      {
-                        Schema.name;
-                        state = `Timed_out;
-                        elapsed = elapsed_ns ~start_mono env;
-                        kind = `Unit_state;
-                      }
-                  in
-                  record name row;
+                  let row = run_one ~service_sw:sw entry in
+                  record (fst entry) row;
                   row))
             ordered
         in
         List.iter (fun p -> ignore (Eio.Promise.await p)) promises;
-        assemble ~missing_state:`Timed_out
+        assemble ()
     | `Throw_first ->
         (* Inner Switch so we can cancel siblings on the first non-
          * Active outcome. Each fiber that hits a terminal non-Active
@@ -348,5 +330,5 @@ module Make (M : Systemctl.S) = struct
                     | None -> ()
                     | Some e -> raise (Schema.Pctl_error e)))
               ordered);
-        assemble ~missing_state:`Active
+        assemble ()
 end

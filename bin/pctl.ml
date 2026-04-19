@@ -171,37 +171,21 @@ let status_cmd =
   let info = Cmd.info "status" ~doc:"Show systemctl status for the slice (or one service)." in
   Cmd.v info Term.(const run $ svc_arg $ path_arg)
 
-(* ---- list ------------------------------------------------------ *)
+(* ---- list / ls ------------------------------------------------- *)
+
+let mk_list_cmd info =
+  let json_arg = Arg.(value & flag & info [ "json" ] ~doc:"Emit JSON.") in
+  let run json =
+    Eio_main.run @@ fun env ->
+    Eio.Switch.run @@ fun sw -> Cli.Ls.run ~sw ~env ~json ()
+  in
+  Cmd.v info Term.(const run $ json_arg)
 
 let list_cmd =
-  let json_arg =
-    let doc = "Emit JSON list of records." in
-    Arg.(value & flag & info [ "json" ] ~doc)
-  in
-  let table_arg =
-    let doc = "Force table output (default)." in
-    Arg.(value & flag & info [ "table" ] ~doc)
-  in
-  let run json table =
-    Eio_main.run @@ fun env ->
-    Eio.Switch.run @@ fun sw -> Cli.Ls.run ~sw ~env ~json ~table ()
-  in
-  let info = Cmd.info "list" ~doc:"List every registered project with its class." in
-  Cmd.v info Term.(const run $ json_arg $ table_arg)
+  mk_list_cmd
+    (Cmd.info "list" ~doc:"List every registered project with its class.")
 
-let ls_cmd =
-  let info = Cmd.info "ls" ~doc:"Alias for `list`." in
-  let json_arg =
-    Arg.(value & flag & info [ "json" ] ~doc:"Emit JSON.")
-  in
-  let table_arg =
-    Arg.(value & flag & info [ "table" ] ~doc:"Force table output.")
-  in
-  let run json table =
-    Eio_main.run @@ fun env ->
-    Eio.Switch.run @@ fun sw -> Cli.Ls.run ~sw ~env ~json ~table ()
-  in
-  Cmd.v info Term.(const run $ json_arg $ table_arg)
+let ls_cmd = mk_list_cmd (Cmd.info "ls" ~doc:"Alias for `list`.")
 
 (* ---- init ------------------------------------------------------ *)
 
@@ -227,13 +211,10 @@ let gc_cmd =
   let json_arg =
     Arg.(value & flag & info [ "json" ] ~doc:"Emit JSON.")
   in
-  let table_arg =
-    Arg.(value & flag & info [ "table" ] ~doc:"Force table output.")
-  in
-  let run yes json table =
+  let run yes json =
     Eio_main.run @@ fun env ->
     Eio.Switch.run @@ fun sw ->
-    Cli.Gc_cmd.run ~sw ~env ~yes ~json ~table ()
+    Cli.Gc_cmd.run ~sw ~env ~yes ~json ()
   in
   let info =
     Cmd.info "gc"
@@ -241,7 +222,7 @@ let gc_cmd =
         "Report (default) or delete (--yes) non-Live project registry \
          entries. Respects PCTL_NO_GC=1."
   in
-  Cmd.v info Term.(const run $ yes_arg $ json_arg $ table_arg)
+  Cmd.v info Term.(const run $ yes_arg $ json_arg)
 
 (* ---- default (no subcommand) ----------------------------------- *)
 

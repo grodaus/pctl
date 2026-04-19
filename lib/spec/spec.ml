@@ -61,16 +61,17 @@ type probe_json = {
   period_seconds : int; [@default 1]
   timeout_seconds : int; [@default 30]
 }
-[@@deriving of_yojson { strict = false }]
+[@@deriving yojson { strict = false }]
 
 type workspace_json = {
   cwd : bool; [@default false]
   writable : bool; [@default false]
 }
-[@@deriving of_yojson { strict = false }]
+[@@deriving yojson { strict = false }]
 
 type service_json = {
-  kind : kind; [@of_yojson kind_of_yojson]
+  kind : kind;
+      [@to_yojson kind_to_yojson] [@of_yojson kind_of_yojson]
   unit_filename : string;
   service_config : (string * string) list;
       [@of_yojson string_map_of_yojson]
@@ -79,7 +80,7 @@ type service_json = {
   workspace : workspace_json option; [@default None]
   probe : probe_json option; [@default None]
 }
-[@@deriving of_yojson { strict = false }]
+[@@deriving yojson { strict = false }]
 
 type slice_json = {
   unit_filename : string;
@@ -88,7 +89,7 @@ type slice_json = {
       [@of_yojson string_map_of_yojson]
       [@to_yojson string_map_to_yojson]
 }
-[@@deriving of_yojson { strict = false }]
+[@@deriving yojson { strict = false }]
 
 type spec_json = {
   version : int;

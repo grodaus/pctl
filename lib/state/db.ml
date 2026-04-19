@@ -140,7 +140,19 @@ let current_version (conn : t) : int =
   | Ok (Some _) -> (
       match meta_get conn ~key:"schema_version" with
       | None -> 0
-      | Some s -> ( try int_of_string s with _ -> 0))
+      | Some s -> (
+          match int_of_string_opt s with
+          | Some v -> v
+          | None ->
+              raise
+                (Schema.Pctl_error
+                   (Schema.Registry_io
+                      {
+                        id = "schema_version";
+                        reason =
+                          Printf.sprintf
+                            "meta.schema_version is not an integer: %S" s;
+                      }))))
 
 (* Split a multi-statement SQL script on `;`. Caqti's exec runs one
  * statement per call; the statements come from a trusted embedded

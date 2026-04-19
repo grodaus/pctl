@@ -75,59 +75,48 @@ let service ?(workspace = None) ?(cfg = default_service_config ())
     ?(probe = None) name =
   { name; service_config = cfg; workspace; probe }
 
-(* Build spec.json JSON from a set of services. `slice_config` is
- * optional and almost always empty for tests. *)
+(* Build spec.json JSON from a set of services. Uses Spec's derived
+ * yojson so this can't drift from the loader's expectations. *)
 let spec_json ~(services : service_fixture list) : string =
-  let escape s =
-    (* Minimal JSON escape — only the characters we actually care about. *)
-    let buf = Buffer.create (String.length s + 8) in
-    String.iter
-      (fun c ->
-        match c with
-        | '"' -> Buffer.add_string buf "\\\""
-        | '\\' -> Buffer.add_string buf "\\\\"
-        | '\n' -> Buffer.add_string buf "\\n"
-        | '\r' -> Buffer.add_string buf "\\r"
-        | '\t' -> Buffer.add_string buf "\\t"
-        | c -> Buffer.add_char buf c)
-      s;
-    Buffer.contents buf
+  let service_to_json (sf : service_fixture) : Spec.service_json =
+    {
+      kind = Schema.Simple;
+      unit_filename =
+        Printf.sprintf "pctl-@@PROJECT@@-%s.service" sf.name;
+      service_config = sf.service_config;
+      depends_on = [];
+      workspace =
+        (match sf.workspace with
+         | None -> None
+         | Some (cwd, writable) -> Some { cwd; writable });
+      probe =
+        (match sf.probe with
+         | None -> None
+         | Some p ->
+             Some
+               {
+                 exec = p.exec;
+                 period_seconds = p.period_seconds;
+                 timeout_seconds = p.timeout_seconds;
+               });
+    }
   in
-  let kv_to_json (k, v) =
-    Printf.sprintf "\"%s\":\"%s\"" (escape k) (escape v)
+  let services_obj =
+    `Assoc
+      (List.map
+         (fun sf -> (sf.name, Spec.service_json_to_yojson (service_to_json sf)))
+         services)
   in
-  let service_json (sf : service_fixture) =
-    let sc =
-      String.concat "," (List.map kv_to_json sf.service_config)
-    in
-    let ws =
-      match sf.workspace with
-      | None -> "{\"cwd\":false,\"writable\":false}"
-      | Some (cwd, w) ->
-          Printf.sprintf "{\"cwd\":%b,\"writable\":%b}" cwd w
-    in
-    let probe_s =
-      match sf.probe with
-      | None -> "null"
-      | Some p ->
-          let items =
-            String.concat ","
-              (List.map (fun s -> Printf.sprintf "\"%s\"" (escape s)) p.exec)
-          in
-          Printf.sprintf
-            "{\"exec\":[%s],\"period_seconds\":%d,\"timeout_seconds\":%d}"
-            items p.period_seconds p.timeout_seconds
-    in
-    Printf.sprintf
-      "\"%s\":{\"depends_on\":[],\"kind\":\"simple\",\"probe\":%s,\"service_config\":{%s},\"unit_filename\":\"pctl-@@PROJECT@@-%s.service\",\"workspace\":%s}"
-      sf.name probe_s sc sf.name ws
+  let slice : Spec.slice_json =
+    { unit_filename = "pctl-@@PROJECT@@.slice"; slice_config = [] }
   in
-  let services_block =
-    String.concat "," (List.map service_json services)
-  in
-  Printf.sprintf
-    "{\"services\":{%s},\"slice\":{\"slice_config\":{},\"unit_filename\":\"pctl-@@PROJECT@@.slice\"},\"version\":1}"
-    services_block
+  `Assoc
+    [
+      ("services", services_obj);
+      ("slice", Spec.slice_json_to_yojson slice);
+      ("version", `Int 1);
+    ]
+  |> Yojson.Safe.to_string
 
 type scratch = {
   tmp : string;
@@ -186,57 +175,30 @@ let read_dropin ~(id : Schema.project_id) ~unit_filename : string =
       let n = in_channel_length ic in
       really_input_string ic n)
 
-(* Best-effort `systemctl --user reset-failed <pattern>` — clears
- * the `failed` tombstones systemd keeps around after a test that
- * expects a unit to fail. Tolerant of missing systemctl / patterns
- * that don't match anything. *)
-let reset_failed pattern =
-  let cmd =
-    Printf.sprintf
-      "systemctl --user reset-failed %s >/dev/null 2>&1 || true"
-      (Filename.quote pattern)
-  in
-  let _ = Sys.command cmd in
-  ()
-
-(* Best-effort `systemctl --user stop <slice>` — used in teardown after
- * Down.run has already removed the unit files, in case systemd still has
- * the parent slice alive with no active children. *)
-let stop_slice_if_idle slice_name =
-  let cmd =
-    Printf.sprintf
-      "systemctl --user stop %s >/dev/null 2>&1 || true"
-      (Filename.quote slice_name)
-  in
-  let _ = Sys.command cmd in
-  ()
-
 (* Best-effort teardown: calls Down.run, then rm -rf the tmpdir. Any
  * error from Down (already-down; manifest wiped) is swallowed — a
- * teardown must never block another test from running. *)
+ * teardown must never block another test from running.
+ *
+ * Tombstone cleanup goes through Systemctl.Dbus: after Down.run has
+ * removed the unit files, systemd may still hold a `failed` tombstone
+ * on the test's service units or an idle parent slice. Clearing those
+ * keeps leftovers from bleeding into the next test on the same session. *)
 let teardown (s : scratch) =
   let id = try Some (project_id s) with _ -> None in
-  (try
-     Eio_main.run @@ fun env ->
-     Eio.Switch.run @@ fun sw ->
-     let prev_stderr = Unix.dup Unix.stderr in
-     let devnull = Unix.openfile "/dev/null" [ Unix.O_WRONLY ] 0 in
-     Unix.dup2 devnull Unix.stderr;
-     Unix.close devnull;
-     (try ignore (Cli.Down.run ~sw ~env ~path:s.project_dir ())
-      with _ -> ());
-     Unix.dup2 prev_stderr Unix.stderr;
-     Unix.close prev_stderr
-   with _ -> ());
-  (* Clear any `failed` tombstones left by a test that expected a unit to
-   * fail; stop the parent slice if it's still alive with no children. *)
-  (match id with
-   | None -> ()
-   | Some id ->
-       let id_s = Schema.Project_id.to_string id in
-       reset_failed (Printf.sprintf "pctl-%s-*" id_s);
-       reset_failed (Printf.sprintf "pctl-%s.slice" id_s);
-       stop_slice_if_idle (Printf.sprintf "pctl-%s.slice" id_s));
+  Eio_main.run (fun env ->
+      Eio.Switch.run (fun sw ->
+          (try ignore (Cli.Down.run ~sw ~env ~path:s.project_dir ~quiet:true ())
+           with _ -> ());
+          match id with
+          | None -> ()
+          | Some id ->
+              let id_s = Schema.Project_id.to_string id in
+              let slice = Printf.sprintf "pctl-%s.slice" id_s in
+              let handle = Systemctl.Dbus.connect ~sw env in
+              (try Systemctl.Dbus.reset_failed_unit handle ~unit:slice
+               with _ -> ());
+              (try Systemctl.Dbus.stop_unit handle ~unit:slice with _ -> ());
+              Systemctl.Dbus.close handle));
   (* Restore XDG_STATE_HOME env if it was set before. *)
   (match s.xdg_state_home_prev with
    | Some v -> Unix.putenv "XDG_STATE_HOME" v
@@ -390,14 +352,12 @@ let with_scratch ~services f =
 (* ------------------------------------------------------------------ *)
 
 let contains haystack needle =
-  let hl = String.length haystack in
-  let nl = String.length needle in
-  let rec go i =
-    if i + nl > hl then false
-    else if String.sub haystack i nl = needle then true
-    else go (i + 1)
-  in
-  nl = 0 || go 0
+  needle = ""
+  ||
+  try
+    ignore (Str.search_forward (Str.regexp_string needle) haystack 0);
+    true
+  with Not_found -> false
 
 let skip_or_run ~name body =
   match skip_reason () with

@@ -495,6 +495,18 @@ let daemon_reload t =
   in
   check_rc ~op:"Reload" ~unit:"-" ~err rc
 
+(* ResetFailedUnit(s) — clears the `failed` tombstone. Swallows
+ * not-loaded/not-failed errors: callers use this best-effort, same as
+ * `systemctl --user reset-failed` with a glob that matches nothing. *)
+let reset_failed_unit t ~unit:u =
+  with_error @@ fun err ->
+  with_reply @@ fun reply ->
+  let _rc =
+    sd_bus_call_method_s t.bus systemd1_dest systemd1_path manager_iface
+      "ResetFailedUnit" err reply "s" u
+  in
+  ()
+
 (* GetUnit(name) -> ObjectPath. *)
 let get_unit_path t ~unit:u =
   with_error @@ fun err ->

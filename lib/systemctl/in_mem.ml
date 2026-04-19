@@ -114,6 +114,15 @@ let restart_unit t ~unit:u =
 
 let daemon_reload _t = ()
 
+(* The in-memory fake doesn't model the `failed` tombstone separately —
+ * once a unit transitions back to Inactive it's "cleared" from the
+ * real-systemd perspective too. Best-effort no-op matches the Dbus
+ * implementation's unknown-unit behaviour. *)
+let reset_failed_unit t ~unit:u =
+  match current_state t u with
+  | Schema.Failed -> set_state t u Schema.Inactive
+  | _ -> ()
+
 let unit_state t ~unit:u = current_state t u
 
 let subscribe_unit_changes t ~unit:u cb =

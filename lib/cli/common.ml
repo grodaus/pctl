@@ -74,12 +74,7 @@ let iso8601_now () : string =
     (tm.tm_mon + 1) tm.tm_mday tm.tm_hour tm.tm_min tm.tm_sec
 
 let read_boot_id () : string =
-  try
-    let ic = open_in "/proc/sys/kernel/random/boot_id" in
-    Fun.protect
-      ~finally:(fun () -> close_in ic)
-      (fun () -> String.trim (input_line ic))
-  with _ -> ""
+  try State.Session.read_boot_id () with _ -> ""
 
 (* Thin error runner: wrap a thunk, convert Pctl_error -> (prints, exit code).
  * Uncaught exceptions get exit 1 + a generic message. *)

@@ -1,7 +1,8 @@
 ; Shared fixture/temp-file helpers used by the per-module test files.
 (library
  (name test_helpers)
- (modules test_helpers))
+ (modules test_helpers)
+ (libraries str))
 
 ; Per-module unit test executables. Split out of the old monolithic
 ; test_pctl.ml; each file covers a single concern so the runner output

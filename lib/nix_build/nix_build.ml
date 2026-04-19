@@ -21,10 +21,7 @@ let last_line (s : string) : string =
   | Some i -> String.sub s (i + 1) (String.length s - i - 1)
   | None -> s
 
-let print_out_paths ~attr ?tree:_ ?path ~env ~sw () : string =
-  (* `tree` is handled at the CLI layer (see Cli.Common.spec_path) and
-   * skipped before we reach this function. The labelled param lingers
-   * only for API completeness with the Nushell `--tree` flag semantics. *)
+let print_out_paths ~attr ?path ~env ~sw () : string =
   let cwd_arg : Eio.Fs.dir_ty Eio.Path.t option =
     match path with
     | Some p when p <> "" ->

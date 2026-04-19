@@ -121,7 +121,7 @@ let run_wait_all ~env ~sw:_ ~id ~host ~spec ~timeout_seconds :
  *
  * The synthetic fallback mirrors Nushell's `store_tree missing → {}`
  * branch: every service ends up in the no-probe wait path. *)
-let rec spec_for_results (conn : State.Db.t) ~id ~project_id_s : Schema.spec =
+let rec spec_for_results (conn : State.Db.t) ~project_id_s : Schema.spec =
   let row = State.Projects.get_by_id conn ~id:project_id_s in
   match row with
   | None ->
@@ -140,13 +140,11 @@ let rec spec_for_results (conn : State.Db.t) ~id ~project_id_s : Schema.spec =
       | Some p when Sys.file_exists p -> (
           try Spec.load ~path:p
           with Schema.Pctl_error _ ->
-            ignore id;
             (* Fall through to manifest-based synthetic spec. *)
-            spec_from_manifest conn ~id ~project_id_s)
-      | _ -> spec_from_manifest conn ~id ~project_id_s)
+            spec_from_manifest conn ~project_id_s)
+      | _ -> spec_from_manifest conn ~project_id_s)
 
-and spec_from_manifest (conn : State.Db.t) ~id ~project_id_s : Schema.spec =
-  ignore id;
+and spec_from_manifest (conn : State.Db.t) ~project_id_s : Schema.spec =
   let manifest =
     State.Projects.load_manifest conn ~project_id:project_id_s
   in
@@ -236,7 +234,7 @@ let run ~sw ~env ?path ?(timeout = 600) ?(json = false) () : int =
                              first";
                         }))
           in
-          let spec = spec_for_results conn ~id ~project_id_s in
+          let spec = spec_for_results conn ~project_id_s in
           let rows =
             run_wait_all ~env ~sw ~id ~host ~spec ~timeout_seconds:timeout
           in
