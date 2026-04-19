@@ -15,12 +15,23 @@
 
 let boot_id_path = "/proc/sys/kernel/random/boot_id"
 
+(* /proc files report length 0 via [in_channel_length] (they are virtual
+ * — the kernel can't know the rendered size without reading). We must
+ * drain the channel by reading until EOF instead of pre-sizing by
+ * [in_channel_length]. Pre-fix, [Session.reset] saw "" as the boot_id
+ * and wiped every row on every invocation. *)
 let read_boot_id () : string =
   let ic = open_in boot_id_path in
-  let n = in_channel_length ic in
-  let s = really_input_string ic n in
-  close_in ic;
-  String.trim s
+  Fun.protect
+    ~finally:(fun () -> close_in ic)
+    (fun () ->
+      let buf = Buffer.create 64 in
+      (try
+         while true do
+           Buffer.add_channel buf ic 1
+         done
+       with End_of_file -> ());
+      String.trim (Buffer.contents buf))
 
 let reset_query =
   let open Caqti_request.Infix in

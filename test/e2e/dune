@@ -1,21 +1,51 @@
-; Phase 3 e2e smoke — real systemd --user via sd-bus.
+; Phase 3 + Phase 4 e2e tests — real systemd --user.
 ;
-; We use `executable` (not `test`) so the default `runtest` alias
-; does NOT pick this up. The custom `e2e` alias below is how the
-; dev host runs this:
-;   dune test @e2e  (or)  dune build @e2e
+; Each test is declared as an `executable` (not `test`) so `dune runtest`
+; does NOT pick them up; the `e2e` alias rules below run them via
+; `dune build @e2e`. This keeps them out of the Nix sandbox — which has
+; no user dbus, no session, no /run/user/<uid> — and out of
+; `nix flake check`.
 ;
-; `nix flake check` runs only the default alias → sandbox never
-; touches this target → correct, because the Nix sandbox has no
-; user dbus.
-;
-; Gated at runtime on DBUS_SESSION_BUS_ADDRESS; if unset we emit
-; a skip reason and pass.
+; Tests are gated at runtime on DBUS_SESSION_BUS_ADDRESS + /run/user/<uid>;
+; missing either → the test prints SKIP and exits 0. See test/e2e/harness.ml.
+
 (executable
  (name test_dbus_smoke)
+ (modules test_dbus_smoke)
  (libraries schema systemctl eio eio_main eio.unix alcotest unix))
+
+(library
+ (name e2e_harness)
+ (wrapped false)
+ (modules harness)
+ (libraries schema identity install cli state systemctl eio eio_main eio.unix
+            alcotest unix))
+
+(executables
+ (names test_up test_up_idempotent test_reload test_down test_worktree
+        test_workspace)
+ (modules test_up test_up_idempotent test_reload test_down test_worktree
+          test_workspace)
+ (libraries e2e_harness schema identity install cli state systemctl eio
+            eio_main eio.unix alcotest unix))
+
+; IMPORTANT: all six tests run against the SAME systemd --user session.
+; Dune parallelises alias dependencies by default, which would cause
+; races (one test's install step clobbering another's; all tests see
+; the same XDG_RUNTIME_DIR). We collapse them into ONE rule whose action
+; runs every test sequentially — this is the simplest way to force
+; serialisation under `dune build @e2e`.
 
 (rule
  (alias e2e)
- (deps test_dbus_smoke.exe)
- (action (run ./test_dbus_smoke.exe)))
+ (deps test_dbus_smoke.exe test_up.exe test_up_idempotent.exe
+       test_reload.exe test_down.exe test_worktree.exe test_workspace.exe)
+ (action
+  (progn
+   (run ./test_dbus_smoke.exe)
+   (run ./test_up.exe)
+   (run ./test_up_idempotent.exe)
+   (run ./test_reload.exe)
+   (run ./test_down.exe)
+   (run ./test_worktree.exe)
+   (run ./test_workspace.exe))))

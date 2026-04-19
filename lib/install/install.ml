@@ -1,0 +1,136 @@
+(* Install — render the spec into user.control, create drop-ins, compute
+ * the manifest.
+ *
+ * Oracle: pctl/lib/install.nu. Key invariants preserved byte-for-byte:
+ *   1. Unit filename has @@PROJECT@@ substituted to the project id.
+ *   2. .slice/.service files land directly in user.control/.
+ *   3. Every unit gets a drop-in dir at "<unit_filename>.d/" containing
+ *      a single file "pctl-runtime.conf".
+ *   4. Slice drop-in body: "[Slice]\nEnvironment=PCTL_ID=<id>\n".
+ *      Service drop-in body: "[Service]\nEnvironment=PCTL_HOST=<host>\n\
+ *                             Environment=PCTL_ID=<id>\n".
+ *   5. Only the manifest covers the main unit files (not drop-ins).
+ *      Phase 4 brief says the returned manifest list includes both, but
+ *      Nushell `compute-manifest` (units.nu:25-33) and the SQLite
+ *      `manifest` table both key on the main file. Matching Nushell keeps
+ *      `diff` output identical. See "Guessed semantics" in the report.
+ *
+ * The content written to the main unit file is produced by Render.
+ * This differs from Nushell (which copies pre-rendered bytes from a
+ * store tree) but the Phase 4 signature mandates it. See the report's
+ * "Guessed semantics" section. *)
+
+module Paths = Paths
+
+let sha256_hex (bytes : string) : string =
+  Digestif.SHA256.(digest_string bytes |> to_hex)
+
+(* ---- small fs helpers ------------------------------------------- *)
+
+let rec mkdir_p path =
+  if path = "" || path = "/" || path = "." then ()
+  else if Sys.file_exists path then ()
+  else begin
+    mkdir_p (Filename.dirname path);
+    try Unix.mkdir path 0o700
+    with Unix.Unix_error (Unix.EEXIST, _, _) -> ()
+  end
+
+let write_file ~path ~bytes =
+  let parent = Filename.dirname path in
+  mkdir_p parent;
+  try
+    let oc = open_out_gen [ Open_wronly; Open_creat; Open_trunc ] 0o644 path in
+    Fun.protect
+      ~finally:(fun () -> close_out oc)
+      (fun () -> output_string oc bytes)
+  with Sys_error msg ->
+    raise (Schema.Pctl_error (Schema.Install_failed { path; reason = msg }))
+
+(* rm -rf on a directory tree. Tolerates non-existence (returns silently). *)
+let rec rm_rf p =
+  if not (Sys.file_exists p) then ()
+  else if Sys.is_directory p then begin
+    let entries = try Sys.readdir p with Sys_error _ -> [||] in
+    Array.iter (fun name -> rm_rf (Filename.concat p name)) entries;
+    try Unix.rmdir p
+    with Unix.Unix_error _ | Sys_error _ -> ()
+  end
+  else try Sys.remove p with Sys_error _ -> ()
+
+(* ---- drop-in rendering ------------------------------------------ *)
+
+let slice_dropin_body ~(id : Schema.project_id) : string =
+  Printf.sprintf "[Slice]\nEnvironment=PCTL_ID=%s\n"
+    (Schema.Project_id.to_string id)
+
+let service_dropin_body ~(id : Schema.project_id) ~(host : Schema.host) :
+    string =
+  Printf.sprintf "[Service]\nEnvironment=PCTL_HOST=%s\nEnvironment=PCTL_ID=%s\n"
+    (Schema.Host.to_string host)
+    (Schema.Project_id.to_string id)
+
+(* ---- main API --------------------------------------------------- *)
+
+module Install = struct
+  (* Ensure user.control/ exists. *)
+  let ensure_control_dir () = mkdir_p Paths.user_control
+
+  (* Write one slice + its drop-in, return (unit_filename, sha256). *)
+  let write_slice ~(spec : Schema.spec) ~(id : Schema.project_id)
+      ~project_path : string * string =
+    let bytes = Render.slice ~slice:spec.slice ~id ~project_path in
+    let unit_filename =
+      Paths.substitute_id ~id spec.slice.unit_filename
+    in
+    let path =
+      Paths.slice_path ~id ~unit_filename:spec.slice.unit_filename
+    in
+    write_file ~path ~bytes;
+    (* Drop-in. *)
+    let dropin =
+      Paths.dropin_file ~id ~unit_filename:spec.slice.unit_filename
+    in
+    write_file ~path:dropin ~bytes:(slice_dropin_body ~id);
+    (unit_filename, sha256_hex bytes)
+
+  (* Write one service + its drop-in. *)
+  let write_service ~(service : Schema.service_spec)
+      ~(id : Schema.project_id) ~(host : Schema.host) ~project_path :
+      string * string =
+    let bytes = Render.service ~service ~id ~project_path in
+    let unit_filename = Paths.substitute_id ~id service.unit_filename in
+    let path = Paths.service_path ~id ~unit_filename:service.unit_filename in
+    write_file ~path ~bytes;
+    let dropin =
+      Paths.dropin_file ~id ~unit_filename:service.unit_filename
+    in
+    write_file ~path:dropin ~bytes:(service_dropin_body ~id ~host);
+    (unit_filename, sha256_hex bytes)
+
+  let write_units ~(spec : Schema.spec) ~(id : Schema.project_id)
+      ~project_path ~(host : Schema.host) : Schema.manifest =
+    ensure_control_dir ();
+    let slice_entry = write_slice ~spec ~id ~project_path in
+    let service_entries =
+      Schema.StringMap.bindings spec.services
+      |> List.map (fun (_, svc) ->
+             write_service ~service:svc ~id ~host ~project_path)
+    in
+    slice_entry :: service_entries
+    |> List.sort (fun (a, _) (b, _) -> String.compare a b)
+
+  let remove_units ~(id : Schema.project_id) (unit_filenames : string list) :
+      unit =
+    List.iter
+      (fun uf ->
+        (* uf in the manifest already has @@PROJECT@@ substituted to the id.
+         * But to be defensive, substitute again — if it's already substituted,
+         * it's a no-op. *)
+        let basename = Paths.substitute_id ~id uf in
+        let path = Filename.concat Paths.user_control basename in
+        let d = path ^ ".d" in
+        rm_rf d;
+        (try Sys.remove path with Sys_error _ -> ()))
+      unit_filenames
+end

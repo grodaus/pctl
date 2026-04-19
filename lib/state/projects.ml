@@ -68,6 +68,16 @@ let delete_by_id_req =
   (string ->. unit)
     "DELETE FROM projects WHERE id = ?"
 
+(* Null out session-scoped columns but keep the row (path + id stay).
+ * Used by `pctl down` — it preserves the registry entry (so Phase 5/6
+ * can decide when to delete entirely) but marks the project as no-longer-
+ * running. *)
+let clear_runtime_fields_req =
+  (string ->. unit)
+    "UPDATE projects \
+     SET host = NULL, started_at = NULL, store_tree = NULL, session_id = NULL \
+     WHERE id = ?"
+
 let raise_io ~id (e : [> Caqti_error.t ]) =
   raise
     (Schema.Pctl_error
@@ -95,5 +105,10 @@ let all ((module C : Caqti_eio.CONNECTION)) : t list =
 
 let delete_by_id ((module C : Caqti_eio.CONNECTION)) ~id : unit =
   match C.exec delete_by_id_req id with
+  | Ok () -> ()
+  | Error e -> raise_io ~id e
+
+let clear_runtime_fields ((module C : Caqti_eio.CONNECTION)) ~id : unit =
+  match C.exec clear_runtime_fields_req id with
   | Ok () -> ()
   | Error e -> raise_io ~id e
