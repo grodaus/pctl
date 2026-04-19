@@ -95,6 +95,10 @@
             # deadlines. Eio depends on mtime already, but we list it
             # explicitly so `Mtime` is exposed to pctl's linking set.
             mtime
+            # Render / Identity use `Re` for regex-based placeholder
+            # substitution and basename sanitization (replaces the
+            # Nushell-parity hand-rolled Buffer state machines).
+            re
           ];
 
           # `ocaml-build` in `checks` below builds without tests to keep the

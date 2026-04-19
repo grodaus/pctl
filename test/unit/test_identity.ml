@@ -78,7 +78,7 @@ let test_allocate_exhausted () =
             path = Project_id.to_string id;
             reason =
               Printf.sprintf
-                "allocate-host: no free slot in 127.0.0.2..254 for id '%s'"
+                "Host.allocate: no free slot in 127.0.0.2..254 for id '%s'"
                 (Project_id.to_string id);
           }))
     (fun () -> ignore (Host_alloc.allocate ~id ~taken:all))

@@ -20,6 +20,7 @@
   ppx_blob
   logs
   digestif
+  re
   alcotest
   qcheck-core
   qcheck-alcotest))

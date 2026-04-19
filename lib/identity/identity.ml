@@ -29,46 +29,22 @@ let path_expand raw =
   in
   normalize_absolute abs
 
-(* sanitize-basename — 1:1 port of pctl/lib/identity.nu:1-10. *)
+(* Lowercase raw basename, fold every run of non-[a-z0-9_] characters
+ * into a single underscore, trim leading/trailing underscores. Empty
+ * result falls back to "project" so the final id is never "_<hash>". *)
+let non_id_chars_re =
+  Re.compile (Re.rep1 (Re.compl [ Re.alnum; Re.char '_' ]))
+
+let edge_underscores_re =
+  Re.compile
+    (Re.alt
+       [ Re.seq [ Re.bos; Re.rep (Re.char '_') ]
+       ; Re.seq [ Re.rep (Re.char '_'); Re.eos ] ])
 
 let sanitize_basename raw =
-  let lowered =
-    String.map
-      (fun c ->
-        if c >= 'A' && c <= 'Z' then Char.chr (Char.code c + 32) else c)
-      raw
-  in
-  let underscored =
-    String.map
-      (fun c ->
-        if (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c = '_' then c
-        else '_')
-      lowered
-  in
-  let buf = Buffer.create (String.length underscored) in
-  let prev_underscore = ref false in
-  String.iter
-    (fun c ->
-      if c = '_' then (
-        if not !prev_underscore then Buffer.add_char buf '_';
-        prev_underscore := true)
-      else (
-        Buffer.add_char buf c;
-        prev_underscore := false))
-    underscored;
-  let collapsed = Buffer.contents buf in
-  let n = String.length collapsed in
-  let lo = ref 0 in
-  while !lo < n && collapsed.[!lo] = '_' do
-    incr lo
-  done;
-  let hi = ref (n - 1) in
-  while !hi >= !lo && collapsed.[!hi] = '_' do
-    decr hi
-  done;
-  let trimmed =
-    if !lo > !hi then "" else String.sub collapsed !lo (!hi - !lo + 1)
-  in
+  let lowered = String.lowercase_ascii raw in
+  let folded = Re.replace_string non_id_chars_re ~by:"_" lowered in
+  let trimmed = Re.replace_string edge_underscores_re ~by:"" folded in
   if trimmed = "" then "project" else trimmed
 
 (* hash8 — first 8 hex chars of SHA-256 over the absolute path. *)
@@ -117,7 +93,7 @@ module Host_alloc = struct
                   path = id_s;
                   reason =
                     Printf.sprintf
-                      "allocate-host: no free slot in 127.0.0.2..254 for id \
+                      "Host.allocate: no free slot in 127.0.0.2..254 for id \
                        '%s'"
                       id_s;
                 }))

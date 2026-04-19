@@ -11,24 +11,8 @@ open Schema
 (* ------------------------------------------------------------------ *)
 
 let replace_all ~needle ~replacement s =
-  (* String.replace isn't in stdlib; hand-rolled search-and-splice.
-   * Terminates because needle is non-empty. *)
   if needle = "" then s
-  else
-    let nlen = String.length needle in
-    let slen = String.length s in
-    let buf = Buffer.create slen in
-    let i = ref 0 in
-    while !i <= slen - nlen do
-      if String.sub s !i nlen = needle then (
-        Buffer.add_string buf replacement;
-        i := !i + nlen)
-      else (
-        Buffer.add_char buf s.[!i];
-        incr i)
-    done;
-    Buffer.add_substring buf s !i (slen - !i);
-    Buffer.contents buf
+  else Re.replace_string (Re.compile (Re.str needle)) ~by:replacement s
 
 let substitute s ~id ~project_path =
   s
@@ -49,27 +33,14 @@ let emit_section ~header kvs =
   Buffer.contents buf
 
 (* BindPaths is the one systemd directive pctl currently emits as a
- * whitespace-separated scalar: nix/lib/mkProject.nix (before the rewrite)
- * wrote `BindPaths=<path1> <path2>`. systemd accepts that form, but so it
- * does one-line-per-path form — the one-line form is clearer and stays
- * valid if any path contains a space (which none do in practice, but
- * costs us nothing). Split on whitespace, emit one line per entry. *)
+ * whitespace-separated scalar: nix/lib/mkProject.nix writes
+ * `BindPaths=<path1> <path2>`. systemd accepts that form, but so does
+ * the one-line-per-path form — the one-line form is clearer and stays
+ * valid if any path contains a space (which none do in practice).
+ * Input only ever contains space-separated paths; tabs/newlines would
+ * be a spec bug upstream. *)
 let split_ws s =
-  let n = String.length s in
-  let buf = Buffer.create 16 in
-  let parts = ref [] in
-  let flush () =
-    if Buffer.length buf > 0 then (
-      parts := Buffer.contents buf :: !parts;
-      Buffer.clear buf)
-  in
-  for i = 0 to n - 1 do
-    match s.[i] with
-    | ' ' | '\t' | '\n' | '\r' -> flush ()
-    | c -> Buffer.add_char buf c
-  done;
-  flush ();
-  List.rev !parts
+  String.split_on_char ' ' s |> List.filter (fun p -> p <> "")
 
 let expand_key k v =
   (* Returns a list of (key, value) tuples. Most keys pass through

@@ -1,4 +1,4 @@
 (library
  (name identity)
  (public_name pctl.identity)
- (libraries schema digestif digestif.c))
+ (libraries schema digestif digestif.c re))
