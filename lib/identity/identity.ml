@@ -1,6 +1,6 @@
-(* Project identity — ported from pctl/lib/identity.nu `derive-id`.
+(* Project identity — ported from the prior Nushell implementation's `derive-id`.
  *
- * The nushell implementation is the behavioural oracle: the OCaml port
+ * The prior Nushell implementation is the behavioural oracle: the OCaml port
  * must produce byte-identical ids for every path, so Phase 7 can swap
  * the binaries with zero rename of installed slices. See test/unit for
  * the fixture-parity anchors. *)
@@ -8,10 +8,10 @@
 open Schema
 
 (* ------------------------------------------------------------------ *)
-(* Path expansion — faithful port of nushell's `path expand` for absolute
+(* Path expansion — faithful port of Nushell's `path expand` for absolute
  * inputs. Normalizes ./ and ../ and collapses repeated slashes. Does NOT
  * resolve symlinks and does NOT require the path to exist. Relative input
- * is resolved against Sys.getcwd () — mirrors nushell behaviour. *)
+ * is resolved against Sys.getcwd () — mirrors the Nushell oracle behaviour. *)
 (* ------------------------------------------------------------------ *)
 
 let split_path s =

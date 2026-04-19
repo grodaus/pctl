@@ -1,6 +1,6 @@
 (* Restart — restart a single service (or the slice if svc = "").
  *
- * Oracle: pctl/commands/restart.nu. The filename for a service is
+ * Oracle: the prior Nushell `restart` command. The filename for a service is
  * pctl-<id>-<svc>.service; if svc is empty (i.e. caller didn't pass one),
  * the restart targets pctl-<id>.slice — mirrors Nushell `unit-for`.
  *

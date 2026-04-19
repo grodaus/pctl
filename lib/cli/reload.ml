@@ -1,6 +1,6 @@
 (* Reload — same as Up but prints the plan (+/~/=/-) before apply.
  *
- * Oracle: pctl/commands/reload.nu. The key differences from Up:
+ * Oracle: the prior Nushell `reload` command. The key differences from Up:
  *   - Up runs `start` for every service after daemon-reload.
  *   - Reload is minimal: Added -> start, Changed -> restart,
  *     Removed -> stop, Unchanged -> skip; slice actions are a no-op

@@ -2,7 +2,7 @@
  *
  * Layout:
  *   - test_schema     — ADTs, opaque types, yojson round-trip, error rendering
- *   - test_identity   — derive, allocate, fixture parity with the nushell oracle
+ *   - test_identity   — derive, allocate, fixture parity with the Nushell oracle
  *   - test_render     — substitute, service/slice golden files
  *   - test_manifest   — diff correctness and qcheck properties
  *
@@ -285,11 +285,11 @@ let test_error_exit_codes () =
 (* IDENTITY TESTS                                                    *)
 (* ================================================================ *)
 
-(* Fixture parity anchors — computed once from the nushell oracle
- * (`use pctl/lib/identity.nu *; derive-id <path>` and `allocate-host`)
- * and hardcoded here. If the OCaml port drifts from the nushell
- * semantics, THESE fail first — treat a fail as a port bug, not a test
- * bug. Regenerate only with explicit user approval. *)
+(* Fixture parity anchors — computed once from the prior Nushell
+ * identity module (`derive-id <path>` and `allocate-host`) and hardcoded
+ * here. If the OCaml port drifts from the Nushell semantics, THESE fail
+ * first — treat a fail as a port bug, not a test bug. Regenerate only
+ * with explicit user approval. *)
 let fixture_ids =
   [
     ("/tmp/my-project", "my_project_52089b5d", "127.0.0.84");

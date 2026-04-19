@@ -1,9 +1,9 @@
 (* Logs — `pctl logs [svc] [-n N] [-f] [--path DIR]`.
  *
- * Oracle: pctl/commands/logs.nu. Shells out to journalctl --user -u <unit>
- * with -n <N> (default 100 to match Nushell, NOT 50 as the task brief
- * claimed — the Nushell oracle overrides). Passes -f through for
- * follow-mode when --follow is set.
+ * Oracle: the prior Nushell `logs` command. Shells out to
+ * journalctl --user -u <unit> with -n <N> (default 100 to match Nushell,
+ * NOT 50 as the task brief claimed — the Nushell oracle overrides).
+ * Passes -f through for follow-mode when --follow is set.
  *
  * Default N: 100 (Nushell oracle). The plan's "CLI argv" block stated
  * `pctl logs <svc> [-n N]` without a default; we mirror the Nushell

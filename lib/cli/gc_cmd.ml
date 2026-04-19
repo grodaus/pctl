@@ -1,6 +1,6 @@
 (* Gc_cmd — `pctl gc [--yes]`.
  *
- * Oracle: pctl/commands/gc.nu. Two modes:
+ * Oracle: the prior Nushell `gc` command. Two modes:
  *   - Report (default): classify every project (Live/Orphan/Unknown)
  *     and print the report. No mutation.
  *   - Purge (--yes): remove every non-Live project row + unit files.

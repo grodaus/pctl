@@ -1,6 +1,6 @@
 (* Down — stop units, remove files, null out runtime columns.
  *
- * Oracle: pctl/commands/down.nu. Sequence:
+ * Oracle: the prior Nushell `down` command. Sequence:
  *   1. Stop the project slice (systemd cascades to every service under it).
  *   2. Delete unit files and their drop-in dirs.
  *   3. daemon_reload — forget the deleted units.

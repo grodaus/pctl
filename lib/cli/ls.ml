@@ -1,11 +1,11 @@
 (* List — `pctl list` (alias `pctl ls`).
  *
- * Oracle: pctl/commands/list.nu. Nushell emits one row per registered
- * project with columns {id, path, host, started_at, running}. We keep
- * the Nushell column set (so any downstream parsing still works) and
- * add `class` as a derived column (Live/Orphan/Unknown) — strictly more
- * informative than the boolean `running`. Consumers reading only the
- * Nushell columns are unaffected.
+ * Oracle: the prior Nushell `list` command, which emitted one row per
+ * registered project with columns {id, path, host, started_at, running}.
+ * We keep the Nushell column set (so any downstream parsing still works)
+ * and add `class` as a derived column (Live/Orphan/Unknown) — strictly
+ * more informative than the boolean `running`. Consumers reading only
+ * the Nushell columns are unaffected.
  *
  * Plan note: the plan's "Internal schema" keeps class_ as (Live|Orphan|
  * Unknown); the task brief asked for columns {id, path, host, class}.

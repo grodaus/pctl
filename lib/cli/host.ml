@@ -5,7 +5,7 @@
  * down'd), exits non-zero with a message on stderr that includes the
  * substring "not registered" — matches host_not_registered_test.
  *
- * Oracle: pctl/commands/host.nu. *)
+ * Oracle: the prior Nushell `host` command. *)
 
 open Common
 

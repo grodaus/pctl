@@ -1,12 +1,12 @@
-(* Host allocation — port of pctl/lib/identity.nu:20-38.
+(* Host allocation — ported from the prior Nushell identity module.
  *
  *   first_byte  = first raw byte of MD5(id)
  *   initial     = first_byte mod 253 + 2     → range 2..254 inclusive
  *   walk        = bump ..254 then wrap to 2; stop at first slot not in taken
  *   exhaustion  = raise after 253 tries (every slot taken)
  *
- * MD5 is used only as a seed — we inherit it from the nushell impl for
- * byte-compat with existing allocations; not a cryptographic choice. *)
+ * MD5 is used only as a seed — inherited from the prior Nushell implementation
+ * for byte-compat with existing allocations; not a cryptographic choice. *)
 
 open Schema
 

@@ -1,6 +1,6 @@
 (* Init — `pctl init [--force]`.
  *
- * Oracle: pctl/commands/init.nu + templates/init/{flake.nix,.gitignore}.
+ * Oracle: the prior Nushell `init` command + templates/init/{flake.nix,.gitignore}.
  * Nushell behaviour ported 1:1:
  *   - If flake.nix exists in cwd AND --force is not set, refuse with
  *     exit 2 and a stderr message.

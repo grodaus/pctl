@@ -1,14 +1,14 @@
 (* Paths — where pctl writes on disk.
  *
- * Oracle: pctl/lib/units.nu. `user.control` is under
+ * Oracle: the prior Nushell unit-paths layer. `user.control` is under
  * $XDG_RUNTIME_DIR/systemd/user.control (NOT ~/.config/systemd/user.control
- * despite what the Phase 4 task brief says — the Nushell implementation
+ * despite what the Phase 4 task brief said — the Nushell implementation
  * uses XDG_RUNTIME_DIR and the e2e tests assert that). XDG_RUNTIME_DIR
- * must be set; we raise the same "not set" error as
- * pctl/lib/context.nu `require-runtime-dir`.
+ * must be set; we raise the same "not set" error as the prior Nushell
+ * `require-runtime-dir` helper.
  *
  * Unit filename substitution:
- *   Nushell install.nu:22 does `str replace -a '@@PROJECT@@' $project.id`
+ *   The Nushell install module did `str replace -a '@@PROJECT@@' $project.id`
  *   against the *basename* only. We mirror that: we never substitute
  *   @@PROJECT_PATH@@ in filenames (slice/service filenames never embed
  *   a filesystem path), only @@PROJECT@@ -> project_id. *)

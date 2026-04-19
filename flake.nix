@@ -160,27 +160,12 @@
           meta = appMeta;
         };
 
-        # Phase 0: the only check is that the OCaml scaffold compiles.
-        # The old Nushell-era checks (test-types / test-render /
-        # test-mkproject / test-nu) are deleted because render.nix is
-        # gone and mkProject.nix now emits spec.json — their fixtures
-        # no longer match.
-        #
-        # TODO:
-        #   Phase 1 → add `ocaml-unit` running `dune runtest` (alcotest + qcheck).
-        #   Phase 2 → add `ocaml-spec` covering spec.json parse + SQLite roundtrip.
-        #   Phase 3 → ocaml-tests below now includes the Phase 3 in-memory
-        #             Systemctl property suite (test_systemctl_sig.ml) —
-        #             alcotest discovers it via (tests ...) in test/unit/dune.
-        #   Phase 3+ → The Phase 3 e2e smoke (test/e2e/test_dbus_smoke.ml)
-        #             lives under the `e2e` dune alias — `dune build @e2e`.
-        #             It is NOT run in the Nix sandbox because the sandbox
-        #             has no `systemd --user` session and no DBUS_SESSION_
-        #             BUS_ADDRESS. The test exits 0 with a SKIP message on
-        #             any host lacking those, so CI can run `dune test @e2e`
-        #             inside a systemd-enabled runner once wired.
-        #   Phase 4+ → add a Nix-side `spec-json-schema` check once spec.json
-        #              has fixtures worth validating from Nix.
+        # `ocaml-build` builds the binary without the test suite.
+        # `ocaml-tests` re-uses the same derivation with `doCheck = true`
+        # so the alcotest + qcheck + integration suites run in the Nix
+        # sandbox. The real-systemd e2e suite (`dune build @e2e`) is NOT
+        # exposed here — it requires a live user session and runs on the
+        # host / a privileged CI runner (see .forgejo/workflows/ci.yml).
         checks = {
           ocaml-build = pctlPkg;
           # Phase 1: alcotest + qcheck suite for the pure core

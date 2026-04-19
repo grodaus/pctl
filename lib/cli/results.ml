@@ -1,6 +1,6 @@
 (* Results — `pctl results [--timeout SECS] [--json] [--path DIR]`.
  *
- * Oracle: pctl/commands/results.nu. Behaviour:
+ * Oracle: the prior Nushell `results` command. Behaviour:
  *   1. Resolve project path + id.
  *   2. Open DB, session-reset, load the project row.
  *   3. Re-load the spec from the row's [store_tree] (the spec.json

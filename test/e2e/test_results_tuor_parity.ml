@@ -1,6 +1,6 @@
 (* Tuor wire-format parity: pipe `pctl results --json` through `nu` using
- * the same transformations tuor/scripts/collect-pctl-artifacts.nu
- * performs, assert zero errors.
+ * the same transformations that `tuor/scripts/collect-pctl-artifacts`
+ * performs, and assert zero errors.
  *
  * This test depends on `nu` being on $PATH. If it isn't we print SKIP
  * and exit 0 — parity can only be tested on dev hosts. *)

@@ -15,7 +15,7 @@
  * Stdout contract:
  *   "project <id> up · <n> units · host=<h>" (mirrors Nushell).
  *
- * Oracle: pctl/commands/up.nu lines 26-112. *)
+ * Oracle: the prior Nushell `up` command. *)
 
 open Common
 
@@ -85,8 +85,8 @@ let run_wait_ready ~env ~sw:_ ~id ~host ~spec ~timeout_seconds : unit =
 let run ~sw ~env ?tree ?nix ?path ?(no_block = false) ?(wait = false)
     ?(timeout = 300) () : int =
   (* Phase 5 note: the plan brief asked for --no-block AND --wait to
-   * reject with exit 2, but the Nushell oracle (pctl/commands/up.nu)
-   * explicitly allows the combination ("enqueue async + then wait-ready").
+   * reject with exit 2, but the prior Nushell `up` oracle
+   * explicitly allowed the combination ("enqueue async + then wait-ready").
    * No existing e2e test pins either behaviour; we match the oracle to
    * keep tuor's surface identical. Surfaced in the Phase 5 report. *)
   run_with_errors (fun () ->

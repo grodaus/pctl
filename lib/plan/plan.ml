@@ -1,10 +1,11 @@
 (* Plan — diff the old manifest against the new, print a summary,
  * and apply the plan via the Systemctl port.
  *
- * Oracle: pctl/commands/reload.nu for the ordering and action semantics;
- * pctl/lib/manifest.nu `summary` for the "+<a> ~<c> =<u> -<r>" line.
+ * Oracle: the prior Nushell `reload` command for the ordering and action
+ * semantics; the Nushell `manifest summary` helper for the
+ * "+<a> ~<c> =<u> -<r>" line.
  *
- * Apply semantics (from the plan brief + Nushell reload.nu):
+ * Apply semantics (from the plan brief + the Nushell reload oracle):
  *   - Added/Changed services  -> start_unit / restart_unit (started for
  *     Added, restarted for Changed to bounce state).
  *   - Removed services        -> stop_unit (tolerated failure: systemd
@@ -61,16 +62,16 @@ module Make (M : Systemctl.S) = struct
     | Schema.Removed ->
         (* Tolerate failure: systemd may report NoSuchUnit after the
          * unit file has been deleted. A failed stop shouldn't abort
-         * the reload — matches Nushell reload.nu:67-74. *)
+         * the reload — matches the Nushell reload oracle. *)
         (try M.stop_unit t ~unit:r.unit_
          with Schema.Pctl_error _ -> ())
 
   (* daemon_reload first (so systemd sees new/updated unit files on disk
    * before we attempt to start them), then operate on rows, then a final
    * daemon_reload so removed files are forgotten by systemd. Oracle:
-   * pctl/commands/up.nu:81 reloads before start; pctl/commands/down.nu:31
-   * reloads after the stop + delete. Doing both here satisfies every
-   * caller — an extra reload is cheap and always correct. *)
+   * the prior Nushell `up` command reloaded before start; the prior
+   * Nushell `down` reloaded after the stop + delete. Doing both here
+   * satisfies every caller — an extra reload is cheap and always correct. *)
   let apply ~(handle : M.t) ~(rows : Schema.plan_row list) : unit =
     let rows = sort_rows rows in
     M.daemon_reload handle;
