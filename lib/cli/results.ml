@@ -22,18 +22,6 @@
 
 open Common
 
-module Probe_dbus = Probe.Make (Systemctl.Dbus)
-module Probe_in_mem = Probe.Make (Systemctl.In_mem)
-
-(* Pluggable Systemctl for tests — mirror Up.systemctl_choice. *)
-type systemctl_choice =
-  | Real_dbus
-  | Fake_in_mem of Systemctl.In_mem.t
-
-let systemctl_choice = ref Real_dbus
-let set_in_mem_systemctl t = systemctl_choice := Fake_in_mem t
-let reset_systemctl () = systemctl_choice := Real_dbus
-
 (* Find the worst state in the list (for exit code purposes). Ordering
  * (worst to best): Failed > Inactive > Probe_failed > Timed_out > Active.
  * If every row is Active, returns None. *)

@@ -7,7 +7,6 @@
  * arg) that bounces the slice. *)
 
 open Common
-module Gc_dbus = Gc.Make (Systemctl.Dbus)
 
 let run ~sw ~env ~svc ?path () : int =
   run_with_errors (fun () ->
@@ -18,10 +17,10 @@ let run ~sw ~env ~svc ?path () : int =
         if svc = "" then Printf.sprintf "pctl-%s.slice" id_s
         else Printf.sprintf "pctl-%s-%s.service" id_s svc
       in
-      (* Opportunistic sweep: scoped DB connection so restart doesn't
-       * keep the SQLite file open longer than needed. *)
+      (* Opportunistic sweep: scoped DB connection so restart doesn't keep
+       * the SQLite file open longer than needed. *)
       with_connection ~env ~sw (fun conn ->
+          opportunistic_sweep ~env ~sw ~conn;
           let t = Systemctl.Dbus.connect ~sw env in
-          Gc_dbus.opportunistic_sweep ~conn ~handle:t;
           Systemctl.Dbus.restart_unit t ~unit:unit_);
       Printf.printf "restarted %s\n" unit_)

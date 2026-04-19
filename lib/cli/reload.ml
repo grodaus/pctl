@@ -11,31 +11,6 @@
 
 open Common
 
-module Plan_dbus = Plan.Make (Systemctl.Dbus)
-module Plan_in_mem = Plan.Make (Systemctl.In_mem)
-module Gc_dbus = Gc.Make (Systemctl.Dbus)
-module Gc_in_mem = Gc.Make (Systemctl.In_mem)
-
-type systemctl_choice = Real_dbus | Fake_in_mem of Systemctl.In_mem.t
-
-let systemctl_choice = ref Real_dbus
-let set_in_mem_systemctl t = systemctl_choice := Fake_in_mem t
-let reset_systemctl () = systemctl_choice := Real_dbus
-
-let apply_plan ~env ~sw ~rows =
-  match !systemctl_choice with
-  | Real_dbus ->
-      let t = Systemctl.Dbus.connect ~sw env in
-      Plan_dbus.apply ~handle:t ~rows
-  | Fake_in_mem t -> Plan_in_mem.apply ~handle:t ~rows
-
-let sweep ~env ~sw ~conn =
-  match !systemctl_choice with
-  | Real_dbus ->
-      let t = Systemctl.Dbus.connect ~sw env in
-      Gc_dbus.opportunistic_sweep ~conn ~handle:t
-  | Fake_in_mem t -> Gc_in_mem.opportunistic_sweep ~conn ~handle:t
-
 let run ~sw ~env ?tree ?nix ?path () : int =
   run_with_errors (fun () ->
       let project_path = resolve_path path in
@@ -43,15 +18,13 @@ let run ~sw ~env ?tree ?nix ?path () : int =
       let spec = Spec.load ~path:spec_path_v in
       let id = Identity.derive ~path:project_path in
       with_connection ~env ~sw (fun conn ->
-          sweep ~env ~sw ~conn;
+          opportunistic_sweep ~env ~sw ~conn;
           (* Reuse the existing host if registered; else allocate. *)
-          let existing = existing_host conn ~id in
           let host =
-            match existing with
+            match existing_host conn ~id with
             | Some h -> h
             | None ->
-                let taken = taken_hosts conn in
-                Identity.Host_alloc.allocate ~id ~taken
+                Identity.Host_alloc.allocate ~id ~taken:(taken_hosts conn)
           in
           let old_manifest =
             State.Projects.load_manifest conn
@@ -61,7 +34,10 @@ let run ~sw ~env ?tree ?nix ?path () : int =
           let new_manifest =
             Install.Install.write_units ~spec ~id ~project_path ~host
           in
-          let rows = State.Projects.diff_manifest ~before:old_manifest ~after:new_manifest in
+          let rows =
+            State.Projects.diff_manifest ~before:old_manifest
+              ~after:new_manifest
+          in
           (* Print the plan BEFORE applying. *)
           print_string (Plan.render_summary rows);
           print_endline (State.Projects.manifest_summary rows);

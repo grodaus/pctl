@@ -10,28 +10,40 @@
  *      on class Live/Orphan/Unknown.) *)
 
 open Common
-module Gc_dbus = Gc.Make (Systemctl.Dbus)
-module Gc_in_mem = Gc.Make (Systemctl.In_mem)
 
-type systemctl_choice = Real_dbus | Fake_in_mem of Systemctl.In_mem.t
-
-let systemctl_choice = ref Real_dbus
-let set_in_mem_systemctl t = systemctl_choice := Fake_in_mem t
-let reset_systemctl () = systemctl_choice := Real_dbus
-
-let sweep ~env ~sw ~conn =
+(* Stop the project slice + every tracked unit, then daemon-reload. The
+ * Real_dbus path only needs the slice stop (systemd cascades); the
+ * in-mem fake has no cascade, so we must stop each unit individually. *)
+let stop_and_reload ~env ~sw ~slice_unit ~manifest =
   match !systemctl_choice with
   | Real_dbus ->
       let t = Systemctl.Dbus.connect ~sw env in
-      Gc_dbus.opportunistic_sweep ~conn ~handle:t
-  | Fake_in_mem t -> Gc_in_mem.opportunistic_sweep ~conn ~handle:t
+      (try Systemctl.Dbus.stop_unit t ~unit:slice_unit
+       with Schema.Pctl_error _ -> ());
+      Systemctl.Dbus.daemon_reload t
+  | Fake_in_mem t ->
+      (try Systemctl.In_mem.stop_unit t ~unit:slice_unit
+       with Schema.Pctl_error _ -> ());
+      List.iter
+        (fun (uf, _) ->
+          try Systemctl.In_mem.stop_unit t ~unit:uf
+          with Schema.Pctl_error _ -> ())
+        manifest;
+      Systemctl.In_mem.daemon_reload t
+
+let daemon_reload ~env ~sw =
+  match !systemctl_choice with
+  | Real_dbus ->
+      let t = Systemctl.Dbus.connect ~sw env in
+      Systemctl.Dbus.daemon_reload t
+  | Fake_in_mem t -> Systemctl.In_mem.daemon_reload t
 
 let run ~sw ~env ?path () : int =
   run_with_errors (fun () ->
       let project_path = resolve_path path in
       let id = Identity.derive ~path:project_path in
       with_connection ~env ~sw (fun conn ->
-          sweep ~env ~sw ~conn;
+          opportunistic_sweep ~env ~sw ~conn;
           let project_id_s = Schema.Project_id.to_string id in
           let existing_manifest =
             State.Projects.load_manifest conn ~project_id:project_id_s
@@ -49,34 +61,12 @@ let run ~sw ~env ?path () : int =
                           project_id_s project_path;
                     }));
           let slice_unit = Printf.sprintf "pctl-%s.slice" project_id_s in
-          (* Stop the slice (cascades to services on real systemd). For the
-           * in-memory fake, also stop each tracked unit so tests see them
-           * inactive. *)
-          (match !systemctl_choice with
-           | Real_dbus ->
-               let t = Systemctl.Dbus.connect ~sw env in
-               (try Systemctl.Dbus.stop_unit t ~unit:slice_unit
-                with Schema.Pctl_error _ -> ());
-               Systemctl.Dbus.daemon_reload t
-           | Fake_in_mem t ->
-               (try Systemctl.In_mem.stop_unit t ~unit:slice_unit
-                with Schema.Pctl_error _ -> ());
-               List.iter
-                 (fun (uf, _) ->
-                   try Systemctl.In_mem.stop_unit t ~unit:uf
-                   with Schema.Pctl_error _ -> ())
-                 existing_manifest;
-               Systemctl.In_mem.daemon_reload t);
+          stop_and_reload ~env ~sw ~slice_unit ~manifest:existing_manifest;
           (* Delete unit files + drop-in dirs. *)
-          let unit_files = List.map fst existing_manifest in
-          Install.Install.remove_units ~id unit_files;
+          Install.Install.remove_units ~id (List.map fst existing_manifest);
           (* Final daemon_reload so systemd forgets the now-gone units. *)
-          (match !systemctl_choice with
-           | Real_dbus ->
-               let t = Systemctl.Dbus.connect ~sw env in
-               Systemctl.Dbus.daemon_reload t
-           | Fake_in_mem t -> Systemctl.In_mem.daemon_reload t);
-          State.Projects.replace_manifest conn
-            ~project_id:project_id_s ~rows:[];
+          daemon_reload ~env ~sw;
+          State.Projects.replace_manifest conn ~project_id:project_id_s
+            ~rows:[];
           State.Projects.clear_runtime_fields conn ~id:project_id_s;
           Printf.printf "project %s down\n" project_id_s))
