@@ -15,4 +15,8 @@
   ctypes
   yojson
   ppx_deriving_yojson
-  logs))
+  logs
+  digestif
+  alcotest
+  qcheck-core
+  qcheck-alcotest))

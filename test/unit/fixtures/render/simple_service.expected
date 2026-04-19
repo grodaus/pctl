@@ -1,0 +1,9 @@
+[Unit]
+Description=pctl service pg for demo_abc12345
+
+[Service]
+ExecStart=/nix/store/xxx/bin/postgres
+Type=simple
+Restart=on-failure
+StateDirectory=pctl-demo_abc12345-pg
+Environment=PGDATA=/home/me/project

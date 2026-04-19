@@ -47,7 +47,15 @@
 
           # libsystemd for the Phase 3 sd-bus ctypes bindings. Unused
           # at Phase 0 but linked now so Phase 3 just flips a dune stanza.
-          buildInputs = [pkgs.systemdLibs];
+          # alcotest/qcheck are test-only but we keep them in buildInputs
+          # so `nix develop` exposes them for local `dune test` runs.
+          buildInputs =
+            [pkgs.systemdLibs]
+            ++ (with ocamlPackages; [
+              alcotest
+              qcheck-core
+              qcheck-alcotest
+            ]);
 
           propagatedBuildInputs = with ocamlPackages; [
             eio
@@ -59,12 +67,20 @@
             ppx_deriving_yojson
             cmdliner
             logs
+            digestif
           ];
 
-          # No tests yet — Phase 1 wires `dune runtest` (alcotest + qcheck),
-          # Phase 3 adds in-process Fake Systemctl tests, Phase 4+ wires
-          # the e2e alias. See "Testing layers" in the rewrite plan.
+          # `ocaml-build` in `checks` below builds without tests to keep the
+          # smoke-test derivation small. The Phase 1 alcotest/qcheck suite
+          # runs in a separate `ocaml-tests` check (see below) so a pure
+          # library drift in tests doesn't break the binary build.
           doCheck = false;
+
+          checkInputs = with ocamlPackages; [
+            alcotest
+            qcheck-core
+            qcheck-alcotest
+          ];
 
           meta = {
             description = "declarative Nix spec → systemd --user units";
@@ -114,6 +130,14 @@
         #              has fixtures worth validating from Nix.
         checks = {
           ocaml-build = pctlPkg;
+          # Phase 1: alcotest + qcheck suite for the pure core
+          # (schema, identity, render, manifest). Runs `dune test` in a
+          # separate derivation so failures surface independently from the
+          # binary build.
+          ocaml-tests = pctlPkg.overrideAttrs (_old: {
+            pname = "pctl-tests";
+            doCheck = true;
+          });
         };
       };
 

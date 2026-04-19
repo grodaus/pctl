@@ -2,3 +2,4 @@ result
 result-*
 .direnv/
 .pctl/
+_build/

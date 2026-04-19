@@ -1,0 +1,4 @@
+(test
+ (name test_pctl)
+ (libraries schema identity render state yojson alcotest qcheck-core qcheck-alcotest)
+ (deps (source_tree fixtures)))

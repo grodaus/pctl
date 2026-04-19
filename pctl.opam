@@ -37,4 +37,8 @@ depends: [
   "yojson"
   "ppx_deriving_yojson"
   "logs"
+  "digestif"
+  "alcotest" {with-test}
+  "qcheck-core" {with-test}
+  "qcheck-alcotest" {with-test}
 ]

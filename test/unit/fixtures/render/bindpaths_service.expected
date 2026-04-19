@@ -1,0 +1,10 @@
+[Unit]
+Description=my custom test service
+
+[Service]
+ExecStart=/bin/test
+Type=oneshot
+ProtectHome=tmpfs
+BindPaths=/home/me/project
+BindPaths=/tmp/cache
+WorkingDirectory=/home/me/project
