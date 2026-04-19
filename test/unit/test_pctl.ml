@@ -14,10 +14,14 @@
 
 open Schema
 
-(* The `identity` library wraps its two modules under Identity.*.
- * Pull Host_alloc up so tests match the task-brief naming (Host.allocate). *)
+(* Pull Host_alloc up so tests match the task-brief naming. *)
 module Host_alloc = Identity.Host_alloc
-module Manifest = State.Manifest
+
+(* Manifest diff is now a submodule of Projects — alias for test readability. *)
+module Manifest = struct
+  let diff = State.Projects.diff_manifest
+  let summary = State.Projects.manifest_summary
+end
 
 (* ------------------------------------------------------------------ *)
 (* Test helpers                                                         *)

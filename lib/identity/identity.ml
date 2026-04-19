@@ -1,17 +1,16 @@
-(* Project identity — ported from the prior Nushell implementation's `derive-id`.
- *
- * The prior Nushell implementation is the behavioural oracle: the OCaml port
- * must produce byte-identical ids for every path, so Phase 7 can swap
- * the binaries with zero rename of installed slices. See test/unit for
- * the fixture-parity anchors. *)
+(* Project identity — ported from the prior Nushell `derive-id` and
+ * `allocate-host`. The Nushell implementation is the behavioural
+ * oracle; the OCaml port must produce byte-identical ids and hosts for
+ * every path so the binaries swap cleanly. See test/unit for fixture-
+ * parity anchors. *)
 
 open Schema
 
 (* ------------------------------------------------------------------ *)
-(* Path expansion — faithful port of Nushell's `path expand` for absolute
- * inputs. Normalizes ./ and ../ and collapses repeated slashes. Does NOT
- * resolve symlinks and does NOT require the path to exist. Relative input
- * is resolved against Sys.getcwd () — mirrors the Nushell oracle behaviour. *)
+(* Path expansion — faithful port of Nushell's `path expand` for        *)
+(* absolute inputs. Normalizes ./ and ../ and collapses repeated        *)
+(* slashes. Does NOT resolve symlinks and does NOT require the path to  *)
+(* exist. Relative input is resolved against Sys.getcwd ().             *)
 (* ------------------------------------------------------------------ *)
 
 let split_path s =
@@ -103,13 +102,10 @@ let sanitize_basename raw =
 
 (* ------------------------------------------------------------------ *)
 (* hash8 — first 8 hex chars of SHA-256 over the absolute path.         *)
-(* digestif chosen for Phase 1 (ocamlPackages.digestif 1.3.0).          *)
 (* ------------------------------------------------------------------ *)
 
 let sha256_hex s = Digestif.SHA256.(digest_string s |> to_hex)
 let hash8 abs_path = String.sub (sha256_hex abs_path) 0 8
-
-(* Public API *)
 
 let derive ~path =
   let abs = path_expand path in
@@ -118,6 +114,49 @@ let derive ~path =
   let h8 = hash8 abs in
   Project_id.of_string_exn (base ^ "_" ^ h8)
 
-(* Re-export the sibling module so `Identity.Host_alloc.allocate` is
- * reachable from dependents without needing `(wrapped false)`. *)
-module Host_alloc = Host_alloc
+(* ------------------------------------------------------------------ *)
+(* Host allocator.                                                     *)
+(*                                                                    *)
+(*   first_byte  = first raw byte of MD5(id)                          *)
+(*   initial     = first_byte mod 253 + 2     → range 2..254          *)
+(*   walk        = bump ..254 then wrap to 2; stop at first free slot *)
+(*   exhaustion  = raise after 253 tries                              *)
+(*                                                                    *)
+(* MD5 is a seed, not a cryptographic choice — inherited from the     *)
+(* Nushell implementation for byte-compat with existing allocations.  *)
+(* ------------------------------------------------------------------ *)
+
+module Host_alloc = struct
+  let md5_first_byte s =
+    let d = Digestif.MD5.(digest_string s |> to_raw_string) in
+    Char.code d.[0]
+
+  let host_for n = Printf.sprintf "127.0.0.%d" n
+
+  let allocate ~(id : project_id) ~(taken : host list) : host =
+    let id_s = Project_id.to_string id in
+    let taken_set = List.map Host.to_string taken in
+    let first_byte = md5_first_byte id_s in
+    let initial = (first_byte mod 253) + 2 in
+    let rec loop n tries =
+      if tries >= 253 then
+        raise
+          (Pctl_error
+             (Identity_invalid
+                {
+                  path = id_s;
+                  reason =
+                    Printf.sprintf
+                      "allocate-host: no free slot in 127.0.0.2..254 for id \
+                       '%s'"
+                      id_s;
+                }))
+      else
+        let candidate = host_for n in
+        if not (List.mem candidate taken_set) then Host.of_string_exn candidate
+        else
+          let next = if n < 254 then n + 1 else 2 in
+          loop next (tries + 1)
+    in
+    loop initial 0
+end

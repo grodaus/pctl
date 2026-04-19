@@ -49,7 +49,7 @@ let raise_io ~id (e : [> Caqti_error.t ]) =
 (* Private INSERT/UPSERT that returns Result instead of raising, so
  * [with_transaction] sees an `Error` for a failed meta update and
  * rolls back the projects UPDATE rather than relying on the
- * Fiber.cleanup exception path. The public [Meta.set] keeps its
+ * Fiber.cleanup exception path. The public [Db.meta_set] keeps its
  * raise-on-failure contract; this is only used inside the transaction. *)
 let set_meta_q =
   let open Caqti_request.Infix in

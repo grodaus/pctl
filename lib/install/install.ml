@@ -9,16 +9,63 @@
  *   4. The manifest covers main unit files only, not drop-ins.
  *
  * The content written to the main unit file is produced by Render.
- * This differs from Nushell (which copies pre-rendered bytes from a
- * store tree) but the Phase 4 signature mandates it. See the report's
- * "Guessed semantics" section. *)
+ * Nushell copied pre-rendered bytes from a store tree; the OCaml port
+ * renders in-process at install time. *)
 
-module Paths = Paths
+(* ------------------------------------------------------------------ *)
+(* Paths — where pctl writes on disk.                                  *)
+(*                                                                     *)
+(* `user.control` is under $XDG_RUNTIME_DIR/systemd/user.control (NOT  *)
+(* ~/.config/systemd/user.control, despite what the Phase 4 task brief *)
+(* said — the Nushell implementation uses XDG_RUNTIME_DIR and the e2e  *)
+(* tests assert that). XDG_RUNTIME_DIR must be set; we raise the same  *)
+(* "not set" error as the Nushell `require-runtime-dir` helper.        *)
+(* ------------------------------------------------------------------ *)
+
+module Paths = struct
+  let user_control : string =
+    match Sys.getenv_opt "XDG_RUNTIME_DIR" with
+    | None | Some "" ->
+        raise
+          (Schema.Pctl_error
+             (Schema.Install_failed
+                {
+                  path = "XDG_RUNTIME_DIR";
+                  reason =
+                    "XDG_RUNTIME_DIR is not set (requires Linux + systemd \
+                     --user)";
+                }))
+    | Some rt -> Filename.concat rt (Filename.concat "systemd" "user.control")
+
+  (* Substitute @@PROJECT@@ in unit basenames. Filenames never contain
+   * @@PROJECT_PATH@@ (it would be nonsense in a filename); that rule
+   * is Render's concern. *)
+  let substitute_id ~(id : Schema.project_id) (basename : string) : string =
+    Render.replace_all ~needle:"@@PROJECT@@"
+      ~replacement:(Schema.Project_id.to_string id)
+      basename
+
+  let slice_path ~(id : Schema.project_id) ~(unit_filename : string) : string =
+    Filename.concat user_control (substitute_id ~id unit_filename)
+
+  let service_path ~(id : Schema.project_id) ~(unit_filename : string) : string
+      =
+    Filename.concat user_control (substitute_id ~id unit_filename)
+
+  let dropin_dir ~(id : Schema.project_id) ~(unit_filename : string) : string =
+    (substitute_id ~id unit_filename |> Filename.concat user_control) ^ ".d"
+
+  let dropin_file ~(id : Schema.project_id) ~(unit_filename : string) : string
+      =
+    Filename.concat (dropin_dir ~id ~unit_filename) "pctl-runtime.conf"
+end
+
+(* ------------------------------------------------------------------ *)
+(* Small fs helpers.                                                   *)
+(* ------------------------------------------------------------------ *)
 
 let sha256_hex (bytes : string) : string =
   Digestif.SHA256.(digest_string bytes |> to_hex)
-
-(* ---- small fs helpers ------------------------------------------- *)
 
 let rec mkdir_p path =
   if path = "" || path = "/" || path = "." then ()
@@ -51,7 +98,9 @@ let rec rm_rf p =
   end
   else try Sys.remove p with Sys_error _ -> ()
 
-(* ---- drop-in rendering ------------------------------------------ *)
+(* ------------------------------------------------------------------ *)
+(* Drop-in rendering.                                                  *)
+(* ------------------------------------------------------------------ *)
 
 (* Environment= is only valid under [Service]. Slices don't exec, so
    they get no drop-in: systemd warns "Unknown key 'Environment' in
@@ -63,7 +112,9 @@ let service_dropin_body ~(id : Schema.project_id) ~(host : Schema.host) :
     (Schema.Host.to_string host)
     (Schema.Project_id.to_string id)
 
-(* ---- main API --------------------------------------------------- *)
+(* ------------------------------------------------------------------ *)
+(* Main API.                                                           *)
+(* ------------------------------------------------------------------ *)
 
 module Install = struct
   (* Ensure user.control/ exists. *)

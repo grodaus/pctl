@@ -41,7 +41,7 @@ let caqti_stdenv env : Caqti_eio.stdenv =
 let with_connection ~env ~sw (f : State.Db.t -> 'a) : 'a =
   let stdenv = caqti_stdenv env in
   let conn = State.Db.connect ~sw ~stdenv () in
-  State.Migrate.run conn;
+  State.Db.migrate conn;
   State.Session.reset conn;
   f conn
 (* Note: the connection closes when the switch releases. *)

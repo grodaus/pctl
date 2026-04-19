@@ -54,17 +54,17 @@ let run ~sw ~env ?tree ?nix ?path () : int =
                 Identity.Host_alloc.allocate ~id ~taken
           in
           let old_manifest =
-            State.Manifest_db.load_manifest conn
+            State.Projects.load_manifest conn
               ~project_id:(Schema.Project_id.to_string id)
           in
           (* Render + install — writes the new files, computes new manifest. *)
           let new_manifest =
             Install.Install.write_units ~spec ~id ~project_path ~host
           in
-          let rows = State.Manifest.diff ~before:old_manifest ~after:new_manifest in
+          let rows = State.Projects.diff_manifest ~before:old_manifest ~after:new_manifest in
           (* Print the plan BEFORE applying. *)
           print_string (Plan.render_summary rows);
-          print_endline (State.Manifest.summary rows);
+          print_endline (State.Projects.manifest_summary rows);
           (* Remove files for units that are no longer in the new manifest. *)
           let removed_files =
             List.filter_map
@@ -88,7 +88,7 @@ let run ~sw ~env ?tree ?nix ?path () : int =
               store_tree = Some spec_path_v;
               session_id = (if boot_id = "" then None else Some boot_id);
             };
-          State.Manifest_db.replace_project_manifest conn
+          State.Projects.replace_manifest conn
             ~project_id:(Schema.Project_id.to_string id)
             ~rows:new_manifest;
           apply_plan ~env ~sw ~rows))

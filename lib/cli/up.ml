@@ -111,7 +111,7 @@ let run ~sw ~env ?tree ?nix ?path ?(no_block = false) ?(wait = false)
                 Identity.Host_alloc.allocate ~id ~taken
           in
           let old_manifest =
-            State.Manifest_db.load_manifest conn
+            State.Projects.load_manifest conn
               ~project_id:(Schema.Project_id.to_string id)
           in
           (* Install writes the new manifest's files on disk. *)
@@ -136,10 +136,10 @@ let run ~sw ~env ?tree ?nix ?path ?(no_block = false) ?(wait = false)
               store_tree = Some spec_path_v;
               session_id = (if boot_id = "" then None else Some boot_id);
             };
-          State.Manifest_db.replace_project_manifest conn
+          State.Projects.replace_manifest conn
             ~project_id:(Schema.Project_id.to_string id)
             ~rows:new_manifest;
-          let rows = State.Manifest.diff ~before:old_manifest ~after:new_manifest in
+          let rows = State.Projects.diff_manifest ~before:old_manifest ~after:new_manifest in
           apply_plan ~env ~sw ~rows;
           let unit_count = List.length new_manifest in
           let suffix = if no_block then " (async)" else "" in

@@ -1,7 +1,7 @@
-(* Phase 2 integration suite — in-process SQLite tests.
+(* In-process SQLite integration suite.
  *
  * Each test opens a fresh `sqlite3::memory:` connection via caqti-eio,
- * runs [State.Migrate.run] against it, then exercises one concern. No
+ * runs [Db.migrate] against it, then exercises one concern. No
  * filesystem writes; the only side effect is allocating an in-memory
  * DB per test.
  *
@@ -11,10 +11,7 @@
 
 module Session = State.Session
 module Db = State.Db
-module Migrate = State.Migrate
-module Meta = State.Meta
 module Projects = State.Projects
-module Manifest_db = State.Manifest_db
 
 (* In-memory caqti-eio connection factory. *)
 let memory_uri = Uri.of_string "sqlite3::memory:"
@@ -40,15 +37,15 @@ let fresh_conn ~sw ~stdenv : Db.t =
 let test_migrate_idempotent () =
   eio_run @@ fun ~sw ~stdenv ->
   let conn = fresh_conn ~sw ~stdenv in
-  Migrate.run conn;
+  Db.migrate conn;
   (* Second run must be a no-op (no errors, version unchanged). *)
-  Migrate.run conn;
+  Db.migrate conn;
   Alcotest.(check (option string))
     "schema_version" (Some "1")
-    (Meta.get conn ~key:"schema_version");
+    (Db.meta_get conn ~key:"schema_version");
   Alcotest.(check (option string))
     "last_boot_id starts empty" (Some "")
-    (Meta.get conn ~key:"last_boot_id")
+    (Db.meta_get conn ~key:"last_boot_id")
 
 (* ----- projects CRUD -------------------------------------------- *)
 
@@ -58,7 +55,7 @@ let mk_project ?host ?started_at ?store_tree ?session_id id path : Projects.t =
 let test_projects_crud () =
   eio_run @@ fun ~sw ~stdenv ->
   let conn = fresh_conn ~sw ~stdenv in
-  Migrate.run conn;
+  Db.migrate conn;
   let p1 =
     mk_project ~host:"127.0.0.42" ~started_at:"2026-04-19T00:00:00Z"
       ~store_tree:"/nix/store/xxx" ~session_id:"boot-a" "proj_1"
@@ -106,20 +103,20 @@ let test_projects_crud () =
 let test_manifest_replace () =
   eio_run @@ fun ~sw ~stdenv ->
   let conn = fresh_conn ~sw ~stdenv in
-  Migrate.run conn;
+  Db.migrate conn;
   Projects.upsert conn (mk_project "proj_1" "/tmp/proj_1");
   let first : Schema.manifest =
     [ ("a.service", "h_a1"); ("b.service", "h_b1") ]
   in
-  Manifest_db.replace_project_manifest conn ~project_id:"proj_1" ~rows:first;
-  let got = Manifest_db.load_manifest conn ~project_id:"proj_1" in
+  Projects.replace_manifest conn ~project_id:"proj_1" ~rows:first;
+  let got = Projects.load_manifest conn ~project_id:"proj_1" in
   Alcotest.(check (list (pair string string)))
     "first manifest" first got;
   let second : Schema.manifest =
     [ ("b.service", "h_b2"); ("c.service", "h_c1") ]
   in
-  Manifest_db.replace_project_manifest conn ~project_id:"proj_1" ~rows:second;
-  let got2 = Manifest_db.load_manifest conn ~project_id:"proj_1" in
+  Projects.replace_manifest conn ~project_id:"proj_1" ~rows:second;
+  let got2 = Projects.load_manifest conn ~project_id:"proj_1" in
   Alcotest.(check (list (pair string string)))
     "second manifest (replaces, doesn't merge)"
     second got2
@@ -129,7 +126,7 @@ let test_manifest_replace () =
 let test_session_reset_wipes_stale () =
   eio_run @@ fun ~sw ~stdenv ->
   let conn = fresh_conn ~sw ~stdenv in
-  Migrate.run conn;
+  Db.migrate conn;
   Projects.upsert conn
     (mk_project ~host:"127.0.0.42" ~started_at:"now" ~store_tree:"/nix/store/x"
        ~session_id:"boot-a" "proj_1" "/tmp/proj_1");
@@ -143,12 +140,12 @@ let test_session_reset_wipes_stale () =
       Alcotest.(check (option string)) "session_id NULL" None got.session_id);
   Alcotest.(check (option string))
     "meta last_boot_id" (Some "boot-b")
-    (Meta.get conn ~key:"last_boot_id")
+    (Db.meta_get conn ~key:"last_boot_id")
 
 let test_session_reset_noop_same_boot () =
   eio_run @@ fun ~sw ~stdenv ->
   let conn = fresh_conn ~sw ~stdenv in
-  Migrate.run conn;
+  Db.migrate conn;
   let p =
     mk_project ~host:"127.0.0.42" ~started_at:"t0" ~store_tree:"/tree"
       ~session_id:"boot-a" "proj_1" "/tmp/proj_1"
@@ -165,7 +162,7 @@ let test_session_reset_noop_same_boot () =
   Alcotest.(check (option string))
     "meta last_boot_id updated to boot-a"
     (Some "boot-a")
-    (Meta.get conn ~key:"last_boot_id")
+    (Db.meta_get conn ~key:"last_boot_id")
 
 (* ----- transactional rollback semantics ------------------------- *)
 
@@ -180,7 +177,7 @@ let test_session_reset_noop_same_boot () =
 let test_with_transaction_rollback () =
   eio_run @@ fun ~sw ~stdenv ->
   let conn = fresh_conn ~sw ~stdenv in
-  Migrate.run conn;
+  Db.migrate conn;
   let (module C : Caqti_eio.CONNECTION) = conn in
   let insert_req =
     let open Caqti_request.Infix in
@@ -220,17 +217,17 @@ let test_with_transaction_rollback () =
 let test_foreign_keys_cascade () =
   eio_run @@ fun ~sw ~stdenv ->
   let conn = fresh_conn ~sw ~stdenv in
-  Migrate.run conn;
+  Db.migrate conn;
   Projects.upsert conn (mk_project "proj_1" "/tmp/proj_1");
-  Manifest_db.replace_project_manifest conn ~project_id:"proj_1"
+  Projects.replace_manifest conn ~project_id:"proj_1"
     ~rows:[ ("a.service", "h1"); ("b.service", "h2") ];
   Alcotest.(check int)
     "manifest inserted" 2
-    (List.length (Manifest_db.load_manifest conn ~project_id:"proj_1"));
+    (List.length (Projects.load_manifest conn ~project_id:"proj_1"));
   Projects.delete_by_id conn ~id:"proj_1";
   Alcotest.(check int)
     "manifest rows cascaded (FK = ON)" 0
-    (List.length (Manifest_db.load_manifest conn ~project_id:"proj_1"))
+    (List.length (Projects.load_manifest conn ~project_id:"proj_1"))
 
 (* ---------------------------------------------------------------- *)
 

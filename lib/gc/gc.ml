@@ -49,7 +49,7 @@ module Make (M : Systemctl.S) = struct
     let id_s = row.id in
     (* Load the stored manifest so we stop + delete the right unit files. *)
     let manifest =
-      try State.Manifest_db.load_manifest conn ~project_id:id_s
+      try State.Projects.load_manifest conn ~project_id:id_s
       with _ -> []
     in
     let slice_unit = Printf.sprintf "pctl-%s.slice" id_s in
@@ -76,8 +76,7 @@ module Make (M : Systemctl.S) = struct
     (try M.daemon_reload handle with _ -> ());
     (* Wipe the manifest + project row. *)
     (try
-       State.Manifest_db.replace_project_manifest conn ~project_id:id_s
-         ~rows:[]
+       State.Projects.replace_manifest conn ~project_id:id_s ~rows:[]
      with _ -> ());
     try State.Projects.delete_by_id conn ~id:id_s with _ -> ()
 

@@ -166,7 +166,7 @@ let rec spec_for_results (conn : State.Db.t) ~id ~project_id_s : Schema.spec =
 and spec_from_manifest (conn : State.Db.t) ~id ~project_id_s : Schema.spec =
   ignore id;
   let manifest =
-    State.Manifest_db.load_manifest conn ~project_id:project_id_s
+    State.Projects.load_manifest conn ~project_id:project_id_s
   in
   (* Service entries are unit_filenames ending in .service; strip the
    * pctl-<id>- prefix and .service suffix to get the service name. *)

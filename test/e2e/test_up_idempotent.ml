@@ -41,9 +41,9 @@ let () =
         Eio.Switch.run @@ fun sw ->
         Cli.Common.with_connection ~env ~sw (fun conn ->
             let m =
-              State.Manifest_db.load_manifest conn ~project_id:id_s
+              State.Projects.load_manifest conn ~project_id:id_s
             in
-            let rows = State.Manifest.diff ~before:m ~after:m in
+            let rows = State.Projects.diff_manifest ~before:m ~after:m in
             List.for_all
               (fun (r : Schema.plan_row) -> r.action = Schema.Unchanged)
               rows

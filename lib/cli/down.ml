@@ -34,7 +34,7 @@ let run ~sw ~env ?path () : int =
           sweep ~env ~sw ~conn;
           let project_id_s = Schema.Project_id.to_string id in
           let existing_manifest =
-            State.Manifest_db.load_manifest conn ~project_id:project_id_s
+            State.Projects.load_manifest conn ~project_id:project_id_s
           in
           if existing_manifest = [] then
             raise
@@ -76,7 +76,7 @@ let run ~sw ~env ?path () : int =
                let t = Systemctl.Dbus.connect ~sw env in
                Systemctl.Dbus.daemon_reload t
            | Fake_in_mem t -> Systemctl.In_mem.daemon_reload t);
-          State.Manifest_db.replace_project_manifest conn
+          State.Projects.replace_manifest conn
             ~project_id:project_id_s ~rows:[];
           State.Projects.clear_runtime_fields conn ~id:project_id_s;
           Printf.printf "project %s down\n" project_id_s))
