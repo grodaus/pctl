@@ -95,52 +95,21 @@ let run_with_errors (f : unit -> unit) : int =
       Printf.eprintf "pctl: unexpected error: %s\n" (Printexc.to_string e);
       1
 
-(* ------------------------------------------------------------------ *)
-(* Systemctl dispatch — pluggable production/fake swap.
- *
- * Production uses [Real_dbus] (the real sd-bus binding). Tests CAN swap
- * in a [Fake_in_mem] handle via [set_in_mem_systemctl] to exercise
- * CLI commands without talking to real systemd.
- *
- * NOTE: the in-mem seam is defined but not currently wired from any
- * test — e2e tests run against real systemd, and unit tests hit the
- * [In_mem] module directly. The seam is retained because consolidating
- * choice-dispatch across commands needs a single source of truth
- * regardless, and keeping the option open costs only a few lines. *)
-(* ------------------------------------------------------------------ *)
+(* Systemctl dispatch — single source of truth for opening a sd-bus
+ * connection and handing it to Plan/Probe/Gc. *)
 
 module Plan_dbus = Plan.Make (Systemctl.Dbus)
-module Plan_in_mem = Plan.Make (Systemctl.In_mem)
 module Probe_dbus = Probe.Make (Systemctl.Dbus)
-module Probe_in_mem = Probe.Make (Systemctl.In_mem)
 module Gc_dbus = Gc.Make (Systemctl.Dbus)
-module Gc_in_mem = Gc.Make (Systemctl.In_mem)
-
-type systemctl_choice =
-  | Real_dbus
-  | Fake_in_mem of Systemctl.In_mem.t
-
-let systemctl_choice = ref Real_dbus
-let set_in_mem_systemctl t = systemctl_choice := Fake_in_mem t
-let reset_systemctl () = systemctl_choice := Real_dbus
 
 let apply_plan ~env ~sw ~rows =
-  match !systemctl_choice with
-  | Real_dbus ->
-      let t = Systemctl.Dbus.connect ~sw env in
-      Plan_dbus.apply ~handle:t ~rows
-  | Fake_in_mem t -> Plan_in_mem.apply ~handle:t ~rows
+  let t = Systemctl.Dbus.connect ~sw env in
+  Plan_dbus.apply ~handle:t ~rows
 
 let opportunistic_sweep ~env ~sw ~conn =
-  match !systemctl_choice with
-  | Real_dbus ->
-      let t = Systemctl.Dbus.connect ~sw env in
-      Gc_dbus.opportunistic_sweep ~conn ~handle:t
-  | Fake_in_mem t -> Gc_in_mem.opportunistic_sweep ~conn ~handle:t
+  let t = Systemctl.Dbus.connect ~sw env in
+  Gc_dbus.opportunistic_sweep ~conn ~handle:t
 
 let purge ~env ~sw ~conn : int =
-  match !systemctl_choice with
-  | Real_dbus ->
-      let t = Systemctl.Dbus.connect ~sw env in
-      Gc_dbus.purge ~conn ~handle:t
-  | Fake_in_mem t -> Gc_in_mem.purge ~conn ~handle:t
+  let t = Systemctl.Dbus.connect ~sw env in
+  Gc_dbus.purge ~conn ~handle:t

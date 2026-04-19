@@ -11,32 +11,17 @@
 
 open Common
 
-(* Stop the project slice + every tracked unit, then daemon-reload. The
- * Real_dbus path only needs the slice stop (systemd cascades); the
- * in-mem fake has no cascade, so we must stop each unit individually. *)
-let stop_and_reload ~env ~sw ~slice_unit ~manifest =
-  match !systemctl_choice with
-  | Real_dbus ->
-      let t = Systemctl.Dbus.connect ~sw env in
-      (try Systemctl.Dbus.stop_unit t ~unit:slice_unit
-       with Schema.Pctl_error _ -> ());
-      Systemctl.Dbus.daemon_reload t
-  | Fake_in_mem t ->
-      (try Systemctl.In_mem.stop_unit t ~unit:slice_unit
-       with Schema.Pctl_error _ -> ());
-      List.iter
-        (fun (uf, _) ->
-          try Systemctl.In_mem.stop_unit t ~unit:uf
-          with Schema.Pctl_error _ -> ())
-        manifest;
-      Systemctl.In_mem.daemon_reload t
+(* Stop the project slice (systemd cascades to every service under it),
+ * then daemon-reload. *)
+let stop_and_reload ~env ~sw ~slice_unit =
+  let t = Systemctl.Dbus.connect ~sw env in
+  (try Systemctl.Dbus.stop_unit t ~unit:slice_unit
+   with Schema.Pctl_error _ -> ());
+  Systemctl.Dbus.daemon_reload t
 
 let daemon_reload ~env ~sw =
-  match !systemctl_choice with
-  | Real_dbus ->
-      let t = Systemctl.Dbus.connect ~sw env in
-      Systemctl.Dbus.daemon_reload t
-  | Fake_in_mem t -> Systemctl.In_mem.daemon_reload t
+  let t = Systemctl.Dbus.connect ~sw env in
+  Systemctl.Dbus.daemon_reload t
 
 let run ~sw ~env ?path () : int =
   run_with_errors (fun () ->
@@ -61,7 +46,7 @@ let run ~sw ~env ?path () : int =
                           project_id_s project_path;
                     }));
           let slice_unit = Printf.sprintf "pctl-%s.slice" project_id_s in
-          stop_and_reload ~env ~sw ~slice_unit ~manifest:existing_manifest;
+          stop_and_reload ~env ~sw ~slice_unit;
           (* Delete unit files + drop-in dirs. *)
           Install.Install.remove_units ~id (List.map fst existing_manifest);
           (* Final daemon_reload so systemd forgets the now-gone units. *)

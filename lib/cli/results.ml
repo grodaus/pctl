@@ -105,20 +105,14 @@ let format_json (rows : Schema.result_row list) : string =
  * context. *)
 let run_wait_all ~env ~sw:_ ~id ~host ~spec ~timeout_seconds :
     Schema.result_row list =
-  match !systemctl_choice with
-  | Real_dbus ->
-      Eio.Switch.run (fun inner_sw ->
-          let t = Systemctl.Dbus.connect ~sw:inner_sw env in
-          let rows =
-            Probe_dbus.wait_all ~sw:inner_sw ~env ~handle:t ~id ~host
-              ~spec ~timeout_seconds ~strategy:`Collect_all
-          in
-          Systemctl.Dbus.close t;
-          rows)
-  | Fake_in_mem t ->
-      Eio.Switch.run (fun inner_sw ->
-          Probe_in_mem.wait_all ~sw:inner_sw ~env ~handle:t ~id ~host
-            ~spec ~timeout_seconds ~strategy:`Collect_all)
+  Eio.Switch.run (fun inner_sw ->
+      let t = Systemctl.Dbus.connect ~sw:inner_sw env in
+      let rows =
+        Probe_dbus.wait_all ~sw:inner_sw ~env ~handle:t ~id ~host
+          ~spec ~timeout_seconds ~strategy:`Collect_all
+      in
+      Systemctl.Dbus.close t;
+      rows)
 
 (* Resolve the spec.json to use for readiness. Priority:
  *   1. The project's stored [store_tree] if still on disk.

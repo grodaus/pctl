@@ -26,25 +26,16 @@ open Common
  * Eio.Fiber.fork on a closing switch and leak
  * Effect.Unhandled(Cancel.Get_context). *)
 let run_wait_ready ~env ~sw:_ ~id ~host ~spec ~timeout_seconds : unit =
-  match !systemctl_choice with
-  | Real_dbus ->
-      Eio.Switch.run @@ fun inner_sw ->
-      let t = Systemctl.Dbus.connect ~sw:inner_sw env in
-      let _rows =
-        Probe_dbus.wait_all ~sw:inner_sw ~env ~handle:t ~id ~host ~spec
-          ~timeout_seconds ~strategy:`Throw_first
-      in
-      (* Explicit close halts the background dispatch fiber before the
-       * inner switch's release kicks in — belt-and-braces with the scope
-       * isolation above. *)
-      Systemctl.Dbus.close t
-  | Fake_in_mem t ->
-      Eio.Switch.run @@ fun inner_sw ->
-      let _rows =
-        Probe_in_mem.wait_all ~sw:inner_sw ~env ~handle:t ~id ~host ~spec
-          ~timeout_seconds ~strategy:`Throw_first
-      in
-      ()
+  Eio.Switch.run @@ fun inner_sw ->
+  let t = Systemctl.Dbus.connect ~sw:inner_sw env in
+  let _rows =
+    Probe_dbus.wait_all ~sw:inner_sw ~env ~handle:t ~id ~host ~spec
+      ~timeout_seconds ~strategy:`Throw_first
+  in
+  (* Explicit close halts the background dispatch fiber before the
+   * inner switch's release kicks in — belt-and-braces with the scope
+   * isolation above. *)
+  Systemctl.Dbus.close t
 
 let run ~sw ~env ?tree ?nix ?path ?(no_block = false) ?(wait = false)
     ?(timeout = 300) () : int =

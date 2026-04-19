@@ -10,8 +10,7 @@
  *   --table — text table (default when neither flag is passed).
  *
  * Delegates to [Common.purge] so the systemctl dispatch stays in one
- * place. Tests can substitute an in-memory fake via
- * [Common.set_in_mem_systemctl]. *)
+ * place. *)
 
 open Common
 
