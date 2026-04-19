@@ -1,0 +1,4 @@
+(library
+ (name spec)
+ (public_name pctl.spec)
+ (libraries schema yojson))

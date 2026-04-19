@@ -34,6 +34,20 @@
       perSystem = {pkgs, ...}: let
         inherit (pkgs) ocamlPackages;
 
+        # pctl's Nix-side library — exposed both as `flake.lib.${system}`
+        # (the frozen public contract tuor uses) and internally here for
+        # `fixtures` below. Same import; single source of truth.
+        pctlLib = import ./nix/lib {
+          inherit pkgs yants;
+        };
+
+        # Spec-fixture derivations used by the OCaml Phase 2 unit tests.
+        # Each is a `pkgs.writeText` whose outPath IS the spec.json file.
+        # Committed into test/unit/fixtures/spec/*.json; regenerate with
+        #   nix build --no-link --print-out-paths '.#fixtures.<name>'
+        # See nix/fixtures.nix for the commit/regeneration recipe.
+        fixtures = import ./nix/fixtures.nix {inherit pctlLib;};
+
         # Phase 0 scaffold build: dune-built OCaml binary. Real sources
         # ship in Phase 1+. Build inputs mirror the lib set declared in
         # docs/src/plans/20260419-ocaml-rewrite.md.
@@ -62,9 +76,11 @@
             eio_main
             caqti
             caqti-eio
+            caqti-driver-sqlite3
             ctypes
             yojson
             ppx_deriving_yojson
+            ppx_blob
             cmdliner
             logs
             digestif
@@ -102,6 +118,16 @@
 
         packages.pctl = pctlPkg;
         packages.default = pctlPkg;
+
+        # Fixture derivations surfaced as `.#fixtures.<name>`; see
+        # nix/fixtures.nix for the regeneration recipe. Phase-2
+        # Spec-loader tests consume the checked-in JSON under
+        # test/unit/fixtures/spec/, not these — exposing them keeps
+        # regeneration trivial.
+        packages.fixtures-single = fixtures.single;
+        packages.fixtures-multi = fixtures.multi;
+        packages.fixtures-probe = fixtures.probe;
+        packages.fixtures-workspace = fixtures.workspace;
 
         apps.pctl = {
           type = "app";
@@ -146,9 +172,9 @@
         # `pkgs.writeText` that emits spec.json, Q11). Consumers call
         # `pctl.lib.${system}.mkProject { services = { ... }; }` —
         # this is a frozen public contract (see plan "Public contracts").
-        lib = nixpkgs.lib.genAttrs ["x86_64-linux" "aarch64-linux"] (system:
+        lib = nixpkgs.lib.genAttrs ["x86_64-linux" "aarch64-linux"] (sys:
           import ./nix/lib {
-            pkgs = nixpkgs.legacyPackages.${system};
+            pkgs = nixpkgs.legacyPackages.${sys};
             inherit yants;
           });
       };

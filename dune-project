@@ -12,9 +12,11 @@
   eio_main
   caqti
   caqti-eio
+  caqti-driver-sqlite3
   ctypes
   yojson
   ppx_deriving_yojson
+  ppx_blob
   logs
   digestif
   alcotest

@@ -32,6 +32,37 @@ let read_file p =
 
 let fixture_dir = "fixtures/render"
 let fixture p = Filename.concat fixture_dir p
+let spec_fixture name = Filename.concat "fixtures/spec" (name ^ ".json")
+
+(* Local substring predicate — alcotest has no string-contains check and
+ * we don't want to depend on astring just for this. Used by the spec
+ * error-message assertions to verify the offending field name appears
+ * in the error text. *)
+module Astring_contains = struct
+  let substring (haystack : string) (needle : string) : bool =
+    let hl = String.length haystack in
+    let nl = String.length needle in
+    if nl = 0 then true
+    else if nl > hl then false
+    else
+      let rec loop i =
+        if i > hl - nl then false
+        else if String.sub haystack i nl = needle then true
+        else loop (i + 1)
+      in
+      loop 0
+end
+
+(* Write a string to a temp file and return its path. Used by the spec-loader
+ * tests that need to exercise hand-crafted malformed input (the good-path
+ * fixtures come from nix build; the bad-path fixtures are forged locally to
+ * target specific error paths). *)
+let write_temp_file ~prefix ~contents =
+  let path = Filename.temp_file prefix ".json" in
+  let oc = open_out path in
+  output_string oc contents;
+  close_out oc;
+  path
 
 (* ================================================================ *)
 (* SCHEMA TESTS                                                      *)
@@ -645,6 +676,250 @@ let prop_diff_same =
       && List.for_all (fun r -> r.action = Unchanged) rows)
 
 (* ================================================================ *)
+(* SPEC TESTS                                                        *)
+(* ================================================================ *)
+
+(* These tests exercise Spec.load against the real spec.json files that
+ * nix/lib/mkProject.nix emits. Regenerate via nix build (see
+ * nix/fixtures.nix) if you change the emitter. *)
+
+let test_spec_load_single () =
+  let spec = Spec.load ~path:(spec_fixture "single") in
+  Alcotest.(check int) "version" 1 spec.version;
+  Alcotest.(check string)
+    "slice unit_filename"
+    "pctl-@@PROJECT@@.slice" spec.slice.unit_filename;
+  Alcotest.(check int) "service count" 1 (StringMap.cardinal spec.services);
+  let pg = StringMap.find "pg" spec.services in
+  Alcotest.(check string) "name" "pg" pg.name;
+  Alcotest.(check bool) "kind" true (pg.kind = Simple);
+  Alcotest.(check (list string)) "depends_on" [] pg.depends_on;
+  Alcotest.(check bool) "workspace.cwd" false pg.workspace.cwd;
+  Alcotest.(check bool) "workspace.writable" false pg.workspace.writable;
+  Alcotest.(check bool) "probe is None" true (pg.probe = None);
+  Alcotest.(check string)
+    "unit_filename" "pctl-@@PROJECT@@-pg.service" pg.unit_filename;
+  (* service_config keys come from sandbox-defaults + command->ExecStart +
+   * the forced Type= entry. Assert the must-haves without locking in
+   * every sandbox key (that would couple the test to nix/lib/sandbox-defaults.nix). *)
+  let sc = pg.service_config in
+  Alcotest.(check (option string))
+    "ExecStart" (Some "/bin/true") (List.assoc_opt "ExecStart" sc);
+  Alcotest.(check (option string))
+    "Type" (Some "simple") (List.assoc_opt "Type" sc)
+
+let test_spec_load_multi_depends_on () =
+  let spec = Spec.load ~path:(spec_fixture "multi") in
+  Alcotest.(check int) "service count" 3 (StringMap.cardinal spec.services);
+  let server = StringMap.find "server" spec.services in
+  Alcotest.(check (list string))
+    "server depends_on" [ "pg"; "migrate" ] server.depends_on;
+  let pg = StringMap.find "pg" spec.services in
+  Alcotest.(check (list string)) "pg depends_on" [ "migrate" ] pg.depends_on;
+  let migrate = StringMap.find "migrate" spec.services in
+  Alcotest.(check (list string)) "migrate depends_on" [] migrate.depends_on
+
+let test_spec_load_probe () =
+  let spec = Spec.load ~path:(spec_fixture "probe") in
+  let pg = StringMap.find "pg" spec.services in
+  match pg.probe with
+  | None -> Alcotest.fail "expected probe to be present"
+  | Some p ->
+      Alcotest.(check (list string)) "exec" [ "/bin/true" ] p.exec;
+      Alcotest.(check int) "period_seconds" 2 p.period_seconds;
+      Alcotest.(check int) "timeout_seconds" 60 p.timeout_seconds
+
+let test_spec_load_workspace () =
+  let spec = Spec.load ~path:(spec_fixture "workspace") in
+  let worker = StringMap.find "worker" spec.services in
+  Alcotest.(check bool) "cwd" true worker.workspace.cwd;
+  Alcotest.(check bool) "writable" true worker.workspace.writable;
+  (* And the workspace fragments must have landed in service_config —
+   * OCaml relies on mkProject having folded them in. *)
+  let sc = worker.service_config in
+  Alcotest.(check (option string))
+    "WorkingDirectory" (Some "@@PROJECT_PATH@@")
+    (List.assoc_opt "WorkingDirectory" sc);
+  Alcotest.(check (option string))
+    "BindPaths" (Some "@@PROJECT_PATH@@")
+    (List.assoc_opt "BindPaths" sc);
+  Alcotest.(check (option string))
+    "ProtectHome" (Some "tmpfs")
+    (List.assoc_opt "ProtectHome" sc)
+
+let check_raises_pctl ~name ~predicate f =
+  try
+    ignore (f ());
+    Alcotest.fail (Printf.sprintf "%s: expected Pctl_error, got no raise" name)
+  with
+  | Pctl_error e when predicate e -> ()
+  | Pctl_error e ->
+      Alcotest.fail
+        (Printf.sprintf "%s: unexpected Pctl_error: %s" name (render_error e))
+  | exn ->
+      Alcotest.fail
+        (Printf.sprintf "%s: unexpected exception %s" name
+           (Printexc.to_string exn))
+
+let test_spec_load_missing_file () =
+  check_raises_pctl ~name:"missing file"
+    ~predicate:(function Spec_not_found _ -> true | _ -> false) (fun () ->
+      Spec.load ~path:"/nonexistent/pctl-spec.json")
+
+let test_spec_load_parse_error () =
+  let path = write_temp_file ~prefix:"pctl-bad-" ~contents:"{not json" in
+  Fun.protect
+    ~finally:(fun () -> try Sys.remove path with _ -> ())
+    (fun () ->
+      check_raises_pctl ~name:"bad JSON"
+        ~predicate:(function Spec_parse _ -> true | _ -> false) (fun () ->
+          Spec.load ~path))
+
+let test_spec_load_unknown_version () =
+  let path =
+    write_temp_file ~prefix:"pctl-v99-"
+      ~contents:
+        "{\"version\": 99, \"slice\": {\"unit_filename\": \"s.slice\"}, \
+         \"services\": {}}"
+  in
+  Fun.protect
+    ~finally:(fun () -> try Sys.remove path with _ -> ())
+    (fun () ->
+      check_raises_pctl ~name:"unknown version"
+        ~predicate:(function Spec_unknown_version 99 -> true | _ -> false)
+        (fun () -> Spec.load ~path))
+
+let test_spec_load_missing_version () =
+  let path =
+    write_temp_file ~prefix:"pctl-novers-"
+      ~contents:
+        "{\"slice\": {\"unit_filename\": \"s.slice\"}, \"services\": {}}"
+  in
+  Fun.protect
+    ~finally:(fun () -> try Sys.remove path with _ -> ())
+    (fun () ->
+      check_raises_pctl ~name:"missing version"
+        ~predicate:(function Spec_parse _ -> true | _ -> false) (fun () ->
+          Spec.load ~path))
+
+let test_spec_load_missing_slice () =
+  let path =
+    write_temp_file ~prefix:"pctl-noslice-"
+      ~contents:"{\"version\": 1, \"services\": {}}"
+  in
+  Fun.protect
+    ~finally:(fun () -> try Sys.remove path with _ -> ())
+    (fun () ->
+      check_raises_pctl ~name:"missing slice"
+        ~predicate:(function Spec_parse _ -> true | _ -> false) (fun () ->
+          Spec.load ~path))
+
+let test_spec_load_missing_services () =
+  let path =
+    write_temp_file ~prefix:"pctl-nosvc-"
+      ~contents:
+        "{\"version\": 1, \"slice\": {\"unit_filename\": \"s.slice\"}}"
+  in
+  Fun.protect
+    ~finally:(fun () -> try Sys.remove path with _ -> ())
+    (fun () ->
+      check_raises_pctl ~name:"missing services"
+        ~predicate:(function Spec_parse _ -> true | _ -> false) (fun () ->
+          Spec.load ~path))
+
+let test_spec_load_missing_kind () =
+  let path =
+    write_temp_file ~prefix:"pctl-nokind-"
+      ~contents:
+        "{\"version\": 1, \"slice\": {\"unit_filename\": \"s.slice\"}, \
+         \"services\": {\"pg\": {\"unit_filename\": \"pg.service\", \
+         \"service_config\": {}}}}"
+  in
+  Fun.protect
+    ~finally:(fun () -> try Sys.remove path with _ -> ())
+    (fun () ->
+      check_raises_pctl ~name:"missing kind"
+        ~predicate:(function
+          | Spec_parse { msg; _ } ->
+              (* must name the offending field *)
+              Astring_contains.substring msg "kind"
+          | _ -> false)
+        (fun () -> Spec.load ~path))
+
+let test_spec_load_missing_unit_filename () =
+  let path =
+    write_temp_file ~prefix:"pctl-nouf-"
+      ~contents:
+        "{\"version\": 1, \"slice\": {\"unit_filename\": \"s.slice\"}, \
+         \"services\": {\"pg\": {\"kind\": \"simple\", \
+         \"service_config\": {}}}}"
+  in
+  Fun.protect
+    ~finally:(fun () -> try Sys.remove path with _ -> ())
+    (fun () ->
+      check_raises_pctl ~name:"missing unit_filename"
+        ~predicate:(function
+          | Spec_parse { msg; _ } ->
+              Astring_contains.substring msg "unit_filename"
+          | _ -> false)
+        (fun () -> Spec.load ~path))
+
+let test_spec_load_missing_service_config () =
+  let path =
+    write_temp_file ~prefix:"pctl-nosc-"
+      ~contents:
+        "{\"version\": 1, \"slice\": {\"unit_filename\": \"s.slice\"}, \
+         \"services\": {\"pg\": {\"kind\": \"simple\", \
+         \"unit_filename\": \"pg.service\"}}}"
+  in
+  Fun.protect
+    ~finally:(fun () -> try Sys.remove path with _ -> ())
+    (fun () ->
+      check_raises_pctl ~name:"missing service_config"
+        ~predicate:(function
+          | Spec_parse { msg; _ } ->
+              Astring_contains.substring msg "service_config"
+          | _ -> false)
+        (fun () -> Spec.load ~path))
+
+let test_spec_load_bad_service_config_value () =
+  (* service_config values must be strings; we flag the offending key. *)
+  let path =
+    write_temp_file ~prefix:"pctl-badsc-"
+      ~contents:
+        "{\"version\": 1, \"slice\": {\"unit_filename\": \"s.slice\"}, \
+         \"services\": {\"pg\": {\"kind\": \"simple\", \
+         \"unit_filename\": \"pg.service\", \
+         \"service_config\": {\"ExecStart\": 42}}}}"
+  in
+  Fun.protect
+    ~finally:(fun () -> try Sys.remove path with _ -> ())
+    (fun () ->
+      check_raises_pctl ~name:"non-string service_config value"
+        ~predicate:(function
+          | Spec_parse { msg; _ } ->
+              Astring_contains.substring msg "ExecStart"
+          | _ -> false)
+        (fun () -> Spec.load ~path))
+
+let test_spec_load_bad_kind () =
+  let path =
+    write_temp_file ~prefix:"pctl-badkind-"
+      ~contents:
+        "{\"version\": 1, \"slice\": {\"unit_filename\": \"s.slice\"}, \
+         \"services\": {\"pg\": {\"kind\": \"zombie\", \
+         \"unit_filename\": \"pg.service\", \"service_config\": {}}}}"
+  in
+  Fun.protect
+    ~finally:(fun () -> try Sys.remove path with _ -> ())
+    (fun () ->
+      check_raises_pctl ~name:"unknown kind"
+        ~predicate:(function
+          | Spec_parse { msg; _ } -> Astring_contains.substring msg "zombie"
+          | _ -> false)
+        (fun () -> Spec.load ~path))
+
+(* ================================================================ *)
 (* Test runner                                                       *)
 (* ================================================================ *)
 
@@ -703,4 +978,33 @@ let () =
         ]
         @ List.map QCheck_alcotest.to_alcotest
             [ prop_diff_symmetry; prop_diff_empty_before; prop_diff_same ] );
+      ( "spec",
+        [
+          test_case "load single-service fixture" `Quick test_spec_load_single;
+          test_case "load multi-service with dependsOn" `Quick
+            test_spec_load_multi_depends_on;
+          test_case "load readinessProbe fixture" `Quick test_spec_load_probe;
+          test_case "load workspace fixture" `Quick test_spec_load_workspace;
+          test_case "missing file -> Spec_not_found" `Quick
+            test_spec_load_missing_file;
+          test_case "bad JSON -> Spec_parse" `Quick test_spec_load_parse_error;
+          test_case "version=99 -> Spec_unknown_version" `Quick
+            test_spec_load_unknown_version;
+          test_case "missing version -> Spec_parse" `Quick
+            test_spec_load_missing_version;
+          test_case "missing slice -> Spec_parse" `Quick
+            test_spec_load_missing_slice;
+          test_case "missing services -> Spec_parse" `Quick
+            test_spec_load_missing_services;
+          test_case "missing kind -> Spec_parse" `Quick
+            test_spec_load_missing_kind;
+          test_case "missing unit_filename -> Spec_parse" `Quick
+            test_spec_load_missing_unit_filename;
+          test_case "missing service_config -> Spec_parse" `Quick
+            test_spec_load_missing_service_config;
+          test_case "non-string service_config value -> Spec_parse" `Quick
+            test_spec_load_bad_service_config_value;
+          test_case "unknown kind -> Spec_parse" `Quick
+            test_spec_load_bad_kind;
+        ] );
     ]

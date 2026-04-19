@@ -1,4 +1,6 @@
 (library
  (name state)
  (public_name pctl.state)
- (libraries schema))
+ (libraries schema caqti caqti-eio caqti-eio.unix caqti-driver-sqlite3 eio uri unix)
+ (preprocess (pps ppx_blob))
+ (preprocessor_deps (file ../../migrations/001_init.sql)))
