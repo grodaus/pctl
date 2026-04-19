@@ -1,0 +1,237 @@
+(* Schema ADTs, opaque types, yojson round-trip, error rendering. *)
+
+open Schema
+
+let test_action_strings () =
+  Alcotest.(check string) "Added" "added" (action_to_string Added);
+  Alcotest.(check string) "Changed" "changed" (action_to_string Changed);
+  Alcotest.(check string) "Unchanged" "unchanged" (action_to_string Unchanged);
+  Alcotest.(check string) "Removed" "removed" (action_to_string Removed);
+  Alcotest.(check string) "Added sym" "+" (action_to_symbol Added);
+  Alcotest.(check string) "Changed sym" "~" (action_to_symbol Changed);
+  Alcotest.(check string) "Unchanged sym" "=" (action_to_symbol Unchanged);
+  Alcotest.(check string) "Removed sym" "-" (action_to_symbol Removed)
+
+let test_state_strings () =
+  let pairs =
+    [
+      (Active, "active");
+      (Inactive, "inactive");
+      (Failed, "failed");
+      (Activating, "activating");
+      (Deactivating, "deactivating");
+      (Reloading, "reloading");
+    ]
+  in
+  List.iter
+    (fun (s, str) ->
+      Alcotest.(check string)
+        ("to_string " ^ str)
+        str (state_to_string s);
+      Alcotest.(check (option string))
+        ("of_string " ^ str)
+        (Some str)
+        (Option.map state_to_string (state_of_string str)))
+    pairs;
+  Alcotest.(check (option string))
+    "unknown" None
+    (Option.map state_to_string (state_of_string "nope"))
+
+let test_kind_strings () =
+  let pairs =
+    [
+      (Simple, "simple");
+      (Oneshot, "oneshot");
+      (Forking, "forking");
+      (Notify, "notify");
+      (Dbus, "dbus");
+      (Idle, "idle");
+    ]
+  in
+  List.iter
+    (fun (k, str) ->
+      Alcotest.(check string) str str (kind_to_string k);
+      Alcotest.(check (option string))
+        ("of_string " ^ str)
+        (Some str)
+        (Option.map kind_to_string (kind_of_string str)))
+    pairs;
+  Alcotest.(check (option string))
+    "unknown" None
+    (Option.map kind_to_string (kind_of_string "service"))
+
+let test_class_strings () =
+  Alcotest.(check string) "live" "live" (class_to_string Live);
+  Alcotest.(check string) "orphan" "orphan" (class_to_string Orphan);
+  Alcotest.(check string) "unknown" "unknown" (class_to_string Unknown)
+
+let test_project_id_smart_ctor () =
+  let ok s =
+    Alcotest.(check bool) s true (Option.is_some (Project_id.of_string_opt s))
+  in
+  let bad s =
+    Alcotest.(check bool) s true (Option.is_none (Project_id.of_string_opt s))
+  in
+  ok "my_project_12345678";
+  ok "pctl_736e4605";
+  bad "";
+  bad "has/slash";
+  bad "has\x01bad";
+  Alcotest.check_raises "empty raises"
+    (Pctl_error (Identity_invalid { path = ""; reason = "empty project id" }))
+    (fun () -> ignore (Project_id.of_string_exn ""))
+
+let test_host_smart_ctor () =
+  let ok s =
+    Alcotest.(check bool) s true (Option.is_some (Host.of_string_opt s))
+  in
+  let bad s =
+    Alcotest.(check bool) s true (Option.is_none (Host.of_string_opt s))
+  in
+  ok "127.0.0.2";
+  ok "127.0.0.254";
+  ok "127.0.0.100";
+  bad "127.0.0.1";
+  bad "127.0.0.255";
+  bad "127.0.0.0";
+  bad "127.0.0.256";
+  bad "10.0.0.5";
+  bad "";
+  bad "127.0.0."
+
+let test_result_row_to_json () =
+  (* Byte-level golden: tuor's collect-pctl-artifacts.nu parses the
+   * fields by name and never compares state/kind against specific
+   * strings, so we emit snake_case bare strings. Shape:
+   *   {"name":..., "state":..., "elapsed":..., "kind":...}
+   * with state in {active,failed,inactive,probe_failed,timed_out} and
+   * kind in {probe,unit_state}. *)
+  let r =
+    {
+      name = "pg";
+      state = `Probe_failed;
+      elapsed = 123456789L;
+      kind = `Unit_state;
+    }
+  in
+  let s = Yojson.Safe.to_string (result_row_to_yojson r) in
+  Alcotest.(check string)
+    "probe_failed unit_state JSON"
+    "{\"name\":\"pg\",\"state\":\"probe_failed\",\"elapsed\":123456789,\"kind\":\"unit_state\"}"
+    s;
+  let r2 =
+    { name = "test-a"; state = `Active; elapsed = 42L; kind = `Probe }
+  in
+  Alcotest.(check string)
+    "active probe JSON"
+    "{\"name\":\"test-a\",\"state\":\"active\",\"elapsed\":42,\"kind\":\"probe\"}"
+    (Yojson.Safe.to_string (result_row_to_yojson r2))
+
+let test_result_row_of_json () =
+  let round_trip r =
+    match result_row_of_yojson (result_row_to_yojson r) with
+    | Ok r' ->
+        Alcotest.(check string) "name" r.name r'.name;
+        Alcotest.(check bool) "state" true (r.state = r'.state);
+        Alcotest.(check int64) "elapsed" r.elapsed r'.elapsed;
+        Alcotest.(check bool) "kind" true (r.kind = r'.kind)
+    | Error e -> Alcotest.fail ("parse failed: " ^ e)
+  in
+  round_trip
+    { name = "pg"; state = `Active; elapsed = 1_000_000_000L; kind = `Probe };
+  round_trip
+    {
+      name = "server";
+      state = `Timed_out;
+      elapsed = 0L;
+      kind = `Unit_state;
+    };
+  (match result_row_of_yojson (`String "bad") with
+  | Ok _ -> Alcotest.fail "should not parse string"
+  | Error _ -> ());
+  match
+    result_row_of_yojson
+      (`Assoc
+         [
+           ("name", `String "x");
+           ("state", `String "bogus");
+           ("elapsed", `Int 1);
+           ("kind", `String "probe");
+         ])
+  with
+  | Ok _ -> Alcotest.fail "should reject unknown state"
+  | Error _ -> ()
+
+let test_error_rendering () =
+  let msgs =
+    [
+      ( Spec_not_found { path = "/no" },
+        "spec not found: /no" );
+      ( Spec_parse { path = "/a"; msg = "bad" },
+        "spec parse error (/a): bad" );
+      ( Spec_unknown_version 42,
+        "spec version 42 is not supported by this pctl" );
+      ( Nix_build_failed { expr = ".#x"; exit_code = 1; stderr = "oops" },
+        "nix build '.#x' failed with exit 1:\noops" );
+      ( Install_failed { path = "/dst"; reason = "eacces" },
+        "install failed for /dst: eacces" );
+      ( Bus_connect_failed { msg = "no socket" },
+        "sd-bus connect failed: no socket" );
+      ( Unit_op_failed { op = "start"; unit_ = "x.service"; reply = "nope" },
+        "systemctl start x.service failed: nope" );
+      ( Probe_exec_failed { service = "pg"; msg = "enoent" },
+        "probe for service pg failed to exec: enoent" );
+      ( Probe_timeout { service = "pg"; timeout_ms = 1000 },
+        "probe for service pg timed out after 1000 ms" );
+      ( Identity_invalid { path = "/p"; reason = "bad" },
+        "invalid identity for '/p': bad" );
+      ( Registry_io { id = "proj_1"; reason = "eio" },
+        "registry I/O failure for project proj_1: eio" );
+    ]
+  in
+  List.iter
+    (fun (e, expected) ->
+      Alcotest.(check string) expected expected (render_error e))
+    msgs
+
+let test_error_exit_codes () =
+  let pairs =
+    [
+      (Spec_not_found { path = "" }, 2);
+      (Spec_parse { path = ""; msg = "" }, 2);
+      (Spec_unknown_version 0, 2);
+      (Identity_invalid { path = ""; reason = "" }, 2);
+      (Nix_build_failed { expr = ""; exit_code = 0; stderr = "" }, 3);
+      (Install_failed { path = ""; reason = "" }, 4);
+      (Registry_io { id = ""; reason = "" }, 4);
+      (Bus_connect_failed { msg = "" }, 5);
+      (Unit_op_failed { op = ""; unit_ = ""; reply = "" }, 5);
+      (Probe_exec_failed { service = ""; msg = "" }, 6);
+      (Probe_timeout { service = ""; timeout_ms = 0 }, 6);
+    ]
+  in
+  List.iter
+    (fun (e, code) ->
+      Alcotest.(check int)
+        ("exit code for " ^ render_error e)
+        code (error_exit_code e))
+    pairs
+
+let () =
+  let open Alcotest in
+  run "pctl schema"
+    [
+      ( "schema",
+        [
+          test_case "action strings + symbols" `Quick test_action_strings;
+          test_case "state strings" `Quick test_state_strings;
+          test_case "kind strings" `Quick test_kind_strings;
+          test_case "class strings" `Quick test_class_strings;
+          test_case "project_id smart ctor" `Quick test_project_id_smart_ctor;
+          test_case "host smart ctor" `Quick test_host_smart_ctor;
+          test_case "result_row → JSON golden" `Quick test_result_row_to_json;
+          test_case "result_row round-trip" `Quick test_result_row_of_json;
+          test_case "error rendering" `Quick test_error_rendering;
+          test_case "error exit codes" `Quick test_error_exit_codes;
+        ] );
+    ]

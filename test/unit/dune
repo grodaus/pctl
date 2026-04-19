@@ -1,5 +1,17 @@
+; Shared fixture/temp-file helpers used by the per-module test files.
+(library
+ (name test_helpers)
+ (modules test_helpers))
+
+; Per-module unit test executables. Split out of the old monolithic
+; test_pctl.ml; each file covers a single concern so the runner output
+; shows the concern name in its heading.
 (tests
- (names test_pctl test_systemctl_sig)
+ (names test_schema test_identity test_render test_manifest test_spec
+        test_systemctl_sig)
+ (modules test_schema test_identity test_render test_manifest test_spec
+          test_systemctl_sig)
  (libraries schema identity render state spec systemctl
-            eio eio_main eio.unix yojson alcotest qcheck-core qcheck-alcotest)
+            eio eio_main eio.unix yojson alcotest qcheck-core qcheck-alcotest
+            test_helpers)
  (deps (source_tree fixtures)))
