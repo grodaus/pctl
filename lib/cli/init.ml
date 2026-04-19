@@ -40,51 +40,42 @@ let write_file (path : string) (contents : string) : unit =
  *   3. <cwd>/templates/init (dev tree fallback).
  * Raise Pctl_error if none exist. *)
 let templates_dir () : string =
+  let bin_dir = Filename.dirname Sys.executable_name in
+  let nix_layout =
+    List.fold_left Filename.concat bin_dir
+      [ ".."; "share"; "pctl"; "templates"; "init" ]
+  in
+  let dev_layout =
+    List.fold_left Filename.concat (Sys.getcwd ()) [ "templates"; "init" ]
+  in
   let candidates =
-    let env = Sys.getenv_opt "PCTL_TEMPLATES_DIR" in
-    let bin = Sys.executable_name in
-    let bin_dir = Filename.dirname bin in
-    let nix_layout =
-      Filename.concat bin_dir
-        (Filename.concat ".." (Filename.concat "share"
-           (Filename.concat "pctl" (Filename.concat "templates" "init"))))
-    in
-    let dev_layout =
-      Filename.concat (Sys.getcwd ()) (Filename.concat "templates" "init")
-    in
-    let list = [ nix_layout; dev_layout ] in
-    match env with Some e -> e :: list | None -> list
+    match Sys.getenv_opt "PCTL_TEMPLATES_DIR" with
+    | Some e -> [ e; nix_layout; dev_layout ]
+    | None -> [ nix_layout; dev_layout ]
   in
-  let rec find = function
-    | [] ->
-        raise
-          (Schema.Pctl_error
-             (Schema.Install_failed
-                {
-                  path = "templates/init";
-                  reason =
-                    "pctl init: cannot find templates/init directory — set \
-                     PCTL_TEMPLATES_DIR or run from the pctl source tree";
-                }))
-    | p :: tl ->
-        if Sys.file_exists (Filename.concat p "flake.nix") then p else find tl
-  in
-  find candidates
+  match
+    List.find_opt
+      (fun p -> Sys.file_exists (Filename.concat p "flake.nix"))
+      candidates
+  with
+  | Some p -> p
+  | None ->
+      raise
+        (Schema.Pctl_error
+           (Schema.Install_failed
+              {
+                path = "templates/init";
+                reason =
+                  "pctl init: cannot find templates/init directory — set \
+                   PCTL_TEMPLATES_DIR or run from the pctl source tree";
+              }))
 
+(* Split on '\n' but drop a trailing empty segment when the input ended
+ * with a newline (so "a\nb\n" yields ["a"; "b"], not ["a"; "b"; ""]). *)
 let split_lines s =
-  (* Preserves semantics: trailing newline means empty last element, drop it. *)
-  let rec loop acc i j =
-    if i >= String.length s then
-      let acc = String.sub s j (i - j) :: acc in
-      List.rev acc
-    else if s.[i] = '\n' then
-      let acc = String.sub s j (i - j) :: acc in
-      loop acc (i + 1) (i + 1)
-    else loop acc (i + 1) j
-  in
-  let parts = loop [] 0 0 in
-  (* Drop trailing empty string if the file ended with a newline. *)
-  match List.rev parts with "" :: rest -> List.rev rest | _ -> parts
+  match List.rev (String.split_on_char '\n' s) with
+  | "" :: rest -> List.rev rest
+  | parts -> List.rev parts
 
 let run ?(force = false) () : int =
   Common.run_with_errors (fun () ->
