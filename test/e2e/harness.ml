@@ -189,10 +189,36 @@ let read_dropin ~(id : Schema.project_id) ~unit_filename : string =
       let n = in_channel_length ic in
       really_input_string ic n)
 
+(* Best-effort `systemctl --user reset-failed <pattern>` — clears
+ * the `failed` tombstones systemd keeps around after a test that
+ * expects a unit to fail. Tolerant of missing systemctl / patterns
+ * that don't match anything. Phase 6 carry-over from Phase 5 cleanup. *)
+let reset_failed pattern =
+  let cmd =
+    Printf.sprintf
+      "systemctl --user reset-failed %s >/dev/null 2>&1 || true"
+      (Filename.quote pattern)
+  in
+  let _ = Sys.command cmd in
+  ()
+
+(* Best-effort `systemctl --user stop <slice>` — used in teardown after
+ * Down.run has already removed the unit files, in case systemd still has
+ * the parent slice alive with no active children. *)
+let stop_slice_if_idle slice_name =
+  let cmd =
+    Printf.sprintf
+      "systemctl --user stop %s >/dev/null 2>&1 || true"
+      (Filename.quote slice_name)
+  in
+  let _ = Sys.command cmd in
+  ()
+
 (* Best-effort teardown: calls Down.run, then rm -rf the tmpdir. Any
  * error from Down (already-down; manifest wiped) is swallowed — a
  * teardown must never block another test from running. *)
 let teardown (s : scratch) =
+  let id = try Some (project_id s) with _ -> None in
   (try
      Eio_main.run @@ fun env ->
      Eio.Switch.run @@ fun sw ->
@@ -205,6 +231,15 @@ let teardown (s : scratch) =
      Unix.dup2 prev_stderr Unix.stderr;
      Unix.close prev_stderr
    with _ -> ());
+  (* Clear any `failed` tombstones left by a test that expected a unit to
+   * fail; stop the parent slice if it's still alive with no children. *)
+  (match id with
+   | None -> ()
+   | Some id ->
+       let id_s = Schema.Project_id.to_string id in
+       reset_failed (Printf.sprintf "pctl-%s-*" id_s);
+       reset_failed (Printf.sprintf "pctl-%s.slice" id_s);
+       stop_slice_if_idle (Printf.sprintf "pctl-%s.slice" id_s));
   (* Restore XDG_STATE_HOME env if it was set before. *)
   (match s.xdg_state_home_prev with
    | Some v -> Unix.putenv "XDG_STATE_HOME" v
@@ -318,6 +353,29 @@ let down ~scratch =
   Eio_main.run @@ fun env ->
   Eio.Switch.run @@ fun sw ->
   Cli.Down.run ~sw ~env ~path:scratch.project_dir ()
+
+(* Phase 6 helpers — logs / status / list / gc. *)
+
+let logs ?(lines = 50) ~svc ~scratch () : int * string =
+  with_captured_stdout (fun () ->
+      Eio_main.run @@ fun env ->
+      Eio.Switch.run @@ fun sw ->
+      Cli.Logs.run ~sw ~env ~svc ~path:scratch.project_dir ~lines ())
+
+let status ?(svc = "") ~scratch () : int =
+  Eio_main.run @@ fun env ->
+  Eio.Switch.run @@ fun sw ->
+  Cli.Status.run ~sw ~env ~svc ~path:scratch.project_dir ()
+
+let list ?(json = false) () : int * string =
+  with_captured_stdout (fun () ->
+      Eio_main.run @@ fun env ->
+      Eio.Switch.run @@ fun sw -> Cli.Ls.run ~sw ~env ~json ())
+
+let gc ?(yes = false) ?(json = false) () : int * string =
+  with_captured_stdout (fun () ->
+      Eio_main.run @@ fun env ->
+      Eio.Switch.run @@ fun sw -> Cli.Gc_cmd.run ~sw ~env ~yes ~json ())
 
 (* Test wrapper: setup -> body -> teardown (Fun.protect style). *)
 let with_scratch ~services f =

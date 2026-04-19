@@ -23,6 +23,8 @@ module Plan_dbus = Plan.Make (Systemctl.Dbus)
 module Plan_in_mem = Plan.Make (Systemctl.In_mem)
 module Probe_dbus = Probe.Make (Systemctl.Dbus)
 module Probe_in_mem = Probe.Make (Systemctl.In_mem)
+module Gc_dbus = Gc.Make (Systemctl.Dbus)
+module Gc_in_mem = Gc.Make (Systemctl.In_mem)
 
 (* Pluggable Systemctl for tests. Set via [set_systemctl_override]. When
  * None, Up.run uses Systemctl.Dbus. Phase 4 e2e tests that want an
@@ -43,6 +45,15 @@ let apply_plan ~env ~sw ~rows =
       let t = Systemctl.Dbus.connect ~sw env in
       Plan_dbus.apply ~handle:t ~rows
   | Fake_in_mem t -> Plan_in_mem.apply ~handle:t ~rows
+
+(* Opportunistic GC — called inside with_connection so session_reset has
+ * already run. PCTL_NO_GC=1 opts out inside Gc.opportunistic_sweep. *)
+let sweep ~env ~sw ~conn =
+  match !systemctl_choice with
+  | Real_dbus ->
+      let t = Systemctl.Dbus.connect ~sw env in
+      Gc_dbus.opportunistic_sweep ~conn ~handle:t
+  | Fake_in_mem t -> Gc_in_mem.opportunistic_sweep ~conn ~handle:t
 
 (* Scope the Dbus connection to an INNER Switch so the dispatch fiber
  * (spawned by subscribe_unit_changes) gets cancelled and drained
@@ -86,6 +97,11 @@ let run ~sw ~env ?tree ?nix ?path ?(no_block = false) ?(wait = false)
       let spec = Spec.load ~path:spec_path_v in
       let id = Identity.derive ~path:project_path in
       with_connection ~env ~sw (fun conn ->
+          (* Opportunistic sweep — must run AFTER session_reset (inside
+           * with_connection) and BEFORE any other DB work, so Unknown
+           * rows get their units removed before we potentially allocate
+           * a host that collides with them. *)
+          sweep ~env ~sw ~conn;
           let existing = existing_host conn ~id in
           let host =
             match existing with

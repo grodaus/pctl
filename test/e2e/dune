@@ -25,11 +25,13 @@
  (names test_up test_up_idempotent test_reload test_down test_worktree
         test_workspace test_wait_active test_wait_probe test_wait_timeout
         test_results test_host test_up_no_block test_up_no_wait
-        test_results_tuor_parity)
+        test_results_tuor_parity test_logs test_status test_list test_gc
+        test_gc_explicit test_pctl_no_gc)
  (modules test_up test_up_idempotent test_reload test_down test_worktree
           test_workspace test_wait_active test_wait_probe test_wait_timeout
           test_results test_host test_up_no_block test_up_no_wait
-          test_results_tuor_parity)
+          test_results_tuor_parity test_logs test_status test_list test_gc
+          test_gc_explicit test_pctl_no_gc)
  (libraries e2e_harness schema identity install cli state systemctl yojson
             str eio eio_main eio.unix alcotest unix))
 
@@ -46,7 +48,9 @@
        test_reload.exe test_down.exe test_worktree.exe test_workspace.exe
        test_wait_active.exe test_wait_probe.exe test_wait_timeout.exe
        test_results.exe test_host.exe test_up_no_block.exe
-       test_up_no_wait.exe test_results_tuor_parity.exe)
+       test_up_no_wait.exe test_results_tuor_parity.exe
+       test_logs.exe test_status.exe test_list.exe test_gc.exe
+       test_gc_explicit.exe test_pctl_no_gc.exe)
  (action
   (progn
    (run ./test_dbus_smoke.exe)
@@ -63,4 +67,10 @@
    (run ./test_host.exe)
    (run ./test_up_no_block.exe)
    (run ./test_up_no_wait.exe)
-   (run ./test_results_tuor_parity.exe))))
+   (run ./test_results_tuor_parity.exe)
+   (run ./test_logs.exe)
+   (run ./test_status.exe)
+   (run ./test_list.exe)
+   (run ./test_gc.exe)
+   (run ./test_gc_explicit.exe)
+   (run ./test_pctl_no_gc.exe))))

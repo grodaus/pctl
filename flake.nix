@@ -57,7 +57,12 @@
           duneVersion = "3";
           src = ./.;
 
-          nativeBuildInputs = [pkgs.pkg-config];
+          # git: older nixpkgs ocamlPackages.buildDunePackage runs
+          # `dune subst` in installPhase, which requires git on PATH even
+          # when there's nothing to subst. Newer nixpkgs skip subst when
+          # the dune-project has no version stanza, but tuor's pinned
+          # nixpkgs is older and hits this. Cheap to include unconditionally.
+          nativeBuildInputs = [pkgs.pkg-config pkgs.git];
 
           # libsystemd for the Phase 3 sd-bus ctypes bindings. Unused
           # at Phase 0 but linked now so Phase 3 just flips a dune stanza.
@@ -103,6 +108,15 @@
             qcheck-core
             qcheck-alcotest
           ];
+
+          # `pctl init` reads templates/init/{flake.nix,.gitignore} at
+          # runtime. Install them next to the binary so they ship with the
+          # Nix build — the OCaml side falls back to $out/share/pctl/templates/init
+          # when PCTL_TEMPLATES_DIR is not set.
+          postInstall = ''
+            mkdir -p "$out/share/pctl/templates/init"
+            cp -a templates/init/. "$out/share/pctl/templates/init/"
+          '';
 
           meta = {
             description = "declarative Nix spec → systemd --user units";
