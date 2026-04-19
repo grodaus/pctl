@@ -78,6 +78,7 @@
             caqti-eio
             caqti-driver-sqlite3
             ctypes
+            ctypes-foreign
             yojson
             ppx_deriving_yojson
             ppx_blob
@@ -149,9 +150,16 @@
         # TODO:
         #   Phase 1 → add `ocaml-unit` running `dune runtest` (alcotest + qcheck).
         #   Phase 2 → add `ocaml-spec` covering spec.json parse + SQLite roundtrip.
-        #   Phase 3 → add `ocaml-integration` (in-process Fake Systemctl).
-        #   Phase 3+ → e2e alias runs on the host, NOT in `nix flake check`
-        #              (requires systemd --user; exposed via .forgejo/workflows/ci.yml e2e job).
+        #   Phase 3 → ocaml-tests below now includes the Phase 3 in-memory
+        #             Systemctl property suite (test_systemctl_sig.ml) —
+        #             alcotest discovers it via (tests ...) in test/unit/dune.
+        #   Phase 3+ → The Phase 3 e2e smoke (test/e2e/test_dbus_smoke.ml)
+        #             lives under the `e2e` dune alias — `dune build @e2e`.
+        #             It is NOT run in the Nix sandbox because the sandbox
+        #             has no `systemd --user` session and no DBUS_SESSION_
+        #             BUS_ADDRESS. The test exits 0 with a SKIP message on
+        #             any host lacking those, so CI can run `dune test @e2e`
+        #             inside a systemd-enabled runner once wired.
         #   Phase 4+ → add a Nix-side `spec-json-schema` check once spec.json
         #              has fixtures worth validating from Nix.
         checks = {

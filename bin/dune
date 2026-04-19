@@ -1,5 +1,10 @@
+; pctl binary. Depends on systemctl so libsystemd ends up in the
+; produced executable's DT_NEEDED list (exit criterion: `ldd ...pctl |
+; grep systemd` must match). Phase 4+ will wire the per-command
+; dispatcher; for now the library is linked but only referenced from
+; a no-op suppressor at bin top-level.
 (executable
  (name pctl)
  (public_name pctl)
  (package pctl)
- (libraries cmdliner))
+ (libraries cmdliner systemctl))

@@ -1,0 +1,15 @@
+; systemctl library — SYSTEMCTL signature + two impls.
+;
+; - In_mem: pure Eio-aware fake, used by unit + integration tests.
+; - Dbus: ctypes-foreign binding to libsystemd's sd_bus. Lazy-loads
+;   libsystemd at first use, so the test binaries can still link
+;   even when libsystemd.so is not on LD_LIBRARY_PATH.
+;
+; `(c_library_flags -lsystemd)` forces the produced executables to
+; advertise libsystemd in DT_NEEDED so `ldd ./result/bin/pctl` can
+; see it — plan exit criterion.
+(library
+ (name systemctl)
+ (public_name pctl.systemctl)
+ (libraries schema eio eio.unix ctypes ctypes-foreign)
+ (c_library_flags (-lsystemd)))

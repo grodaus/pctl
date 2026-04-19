@@ -14,6 +14,7 @@
   caqti-eio
   caqti-driver-sqlite3
   ctypes
+  ctypes-foreign
   yojson
   ppx_deriving_yojson
   ppx_blob

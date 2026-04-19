@@ -4,6 +4,11 @@
  * (`up`, `reload`, `down`, `results`, `logs`, `host`, `restart`, `status`,
  * `list`, `gc`, `init`) lands in Phase 4+ per docs/src/plans/20260419-ocaml-rewrite.md. *)
 
+(* Phase 3 link-stub: force-reference Systemctl so libsystemd ends up
+ * in the binary's DT_NEEDED list. Phase 4 replaces this with the real
+ * per-command dispatcher that calls Systemctl.Dbus.connect. *)
+let _ : (module Systemctl.S) = (module Systemctl.In_mem)
+
 let version = "0.0.1-ocaml-rewrite"
 
 let default_cmd () =

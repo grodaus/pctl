@@ -1,0 +1,21 @@
+; Phase 3 e2e smoke — real systemd --user via sd-bus.
+;
+; We use `executable` (not `test`) so the default `runtest` alias
+; does NOT pick this up. The custom `e2e` alias below is how the
+; dev host runs this:
+;   dune test @e2e  (or)  dune build @e2e
+;
+; `nix flake check` runs only the default alias → sandbox never
+; touches this target → correct, because the Nix sandbox has no
+; user dbus.
+;
+; Gated at runtime on DBUS_SESSION_BUS_ADDRESS; if unset we emit
+; a skip reason and pass.
+(executable
+ (name test_dbus_smoke)
+ (libraries schema systemctl eio eio_main eio.unix alcotest unix))
+
+(rule
+ (alias e2e)
+ (deps test_dbus_smoke.exe)
+ (action (run ./test_dbus_smoke.exe)))
