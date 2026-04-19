@@ -12,7 +12,7 @@
 (executable
  (name test_dbus_smoke)
  (modules test_dbus_smoke)
- (libraries schema systemctl eio eio_main eio.unix alcotest unix))
+ (libraries e2e_harness schema systemctl eio eio_main eio.unix alcotest unix))
 
 (library
  (name e2e_harness)

@@ -51,81 +51,75 @@ let simple name exec_line =
   }
 
 let () =
-  match Harness.skip_reason () with
-  | Some why ->
-      Printf.printf "SKIP: test_results_tuor_parity — %s\n" why;
+  Harness.skip_or_run ~name:"test_results_tuor_parity" @@ fun () ->
+  match find_nu () with
+  | None ->
+      Printf.printf "SKIP: test_results_tuor_parity — nu not on PATH\n";
       exit 0
-  | None -> (
-      match find_nu () with
-      | None ->
-          Printf.printf
-            "SKIP: test_results_tuor_parity — nu not on PATH\n";
-          exit 0
-      | Some nu_bin ->
-          (* Realistic two-service project: one oneshot-success, one
-           * simple-long-running. Matches the minimum input shape that
-           * tuor's collect script cares about. *)
-          Harness.with_scratch
-            ~services:
-              [
-                oneshot "pg" true_bin;
-                simple "server"
-                  (Printf.sprintf
-                     "%s -c 'exec %s -c \"while true; do sleep 3600; \
-                      done\"'"
-                     bash bash);
-              ]
-          @@ fun scratch ->
-          let rc = Harness.up_no_block ~scratch in
-          if rc <> 0 then Alcotest.failf "up --no-block exit=%d" rc;
-          let rc_j, out_j = Harness.results ~scratch ~timeout:15 ~json:true () in
-          if rc_j <> 0 then
-            Alcotest.failf "results --json exit=%d, stdout=%s" rc_j out_j;
-          let trimmed = String.trim out_j in
-          (* tuor's script calls `$r.stdout | from json`, then per row
-           * `$"($r | get elapsed)ns" | into duration` and accesses
-           * .name, .state, .kind. Emulate by writing the JSON to a tmp
-           * file and having nu `open --raw` + `from json` it. *)
-          let json_tmp = Filename.temp_file "pctl-tuor-parity" ".json" in
-          let oc = open_out json_tmp in
-          output_string oc trimmed;
-          close_out oc;
-          let nu_script =
-            Printf.sprintf
-              "let items = (open --raw %s | from json);\n\
-               if ($items | length) == 0 { error make { msg: 'empty' } };\n\
-               let rows = ($items | each {|r|\n\
-               \  let dur = $\"($r | get elapsed)ns\" | into duration;\n\
-               \  { name: ($r | get name), state: ($r | get state), kind: \
-               ($r | get kind), duration: $dur }\n\
-               });\n\
-               for r in $rows { if ($r.name | is-empty) { error make { \
-               msg: 'missing name' } } };\n\
-               print ($rows | length)"
-              (Filename.quote json_tmp)
-          in
-          let cmd =
-            Printf.sprintf "%s -c %s" (Filename.quote nu_bin)
-              (Filename.quote nu_script)
-          in
-          let ic = Unix.open_process_in cmd in
-          let buf = Buffer.create 64 in
-          (try
-             while true do
-               Buffer.add_channel buf ic 1
-             done
-           with End_of_file -> ());
-          let status = Unix.close_process_in ic in
-          (match status with
-           | Unix.WEXITED 0 -> ()
-           | Unix.WEXITED n ->
-               (try Sys.remove json_tmp with _ -> ());
-               Alcotest.failf
-                 "nu-script parse rejected pctl JSON (exit=%d); input=%s"
-                 n trimmed
-           | _ ->
-               (try Sys.remove json_tmp with _ -> ());
-               Alcotest.failf "nu-script did not exit cleanly");
-          (try Sys.remove json_tmp with _ -> ());
-          Printf.printf "test_results_tuor_parity OK — nu parsed: %s\n"
-            (String.trim (Buffer.contents buf)))
+  | Some nu_bin ->
+      (* Realistic two-service project: one oneshot-success, one
+       * simple-long-running. Matches the minimum input shape that tuor's
+       * collect script cares about. *)
+      Harness.with_scratch
+        ~services:
+          [
+            oneshot "pg" true_bin;
+            simple "server"
+              (Printf.sprintf
+                 "%s -c 'exec %s -c \"while true; do sleep 3600; done\"'"
+                 bash bash);
+          ]
+      @@ fun scratch ->
+      Harness.check_rc_zero ~label:"up --no-block"
+        (Harness.up_no_block ~scratch);
+      let rc_j, out_j = Harness.results ~scratch ~timeout:15 ~json:true () in
+      if rc_j <> 0 then
+        Alcotest.failf "results --json exit=%d, stdout=%s" rc_j out_j;
+      let trimmed = String.trim out_j in
+      (* tuor's script calls `$r.stdout | from json`, then per row
+       * `$"($r | get elapsed)ns" | into duration` and accesses .name,
+       * .state, .kind. Emulate by writing the JSON to a tmp file and
+       * having nu `open --raw` + `from json` it. *)
+      let json_tmp = Filename.temp_file "pctl-tuor-parity" ".json" in
+      let oc = open_out json_tmp in
+      output_string oc trimmed;
+      close_out oc;
+      let nu_script =
+        Printf.sprintf
+          "let items = (open --raw %s | from json);\n\
+           if ($items | length) == 0 { error make { msg: 'empty' } };\n\
+           let rows = ($items | each {|r|\n\
+           \  let dur = $\"($r | get elapsed)ns\" | into duration;\n\
+           \  { name: ($r | get name), state: ($r | get state), kind: ($r \
+           | get kind), duration: $dur }\n\
+           });\n\
+           for r in $rows { if ($r.name | is-empty) { error make { msg: \
+           'missing name' } } };\n\
+           print ($rows | length)"
+          (Filename.quote json_tmp)
+      in
+      let cmd =
+        Printf.sprintf "%s -c %s" (Filename.quote nu_bin)
+          (Filename.quote nu_script)
+      in
+      let ic = Unix.open_process_in cmd in
+      let buf = Buffer.create 64 in
+      (try
+         while true do
+           Buffer.add_channel buf ic 1
+         done
+       with End_of_file -> ());
+      let status = Unix.close_process_in ic in
+      (match status with
+       | Unix.WEXITED 0 -> ()
+       | Unix.WEXITED n ->
+           (try Sys.remove json_tmp with _ -> ());
+           Alcotest.failf
+             "nu-script parse rejected pctl JSON (exit=%d); input=%s" n
+             trimmed
+       | _ ->
+           (try Sys.remove json_tmp with _ -> ());
+           Alcotest.failf "nu-script did not exit cleanly");
+      (try Sys.remove json_tmp with _ -> ());
+      Printf.printf "test_results_tuor_parity OK — nu parsed: %s\n"
+        (String.trim (Buffer.contents buf))

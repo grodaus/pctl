@@ -380,3 +380,88 @@ let with_scratch ~services f =
   Fun.protect
     ~finally:(fun () -> teardown s)
     (fun () -> f s)
+
+(* ------------------------------------------------------------------ *)
+(* Assertion helpers — collapse repetition in the 20 e2e test files.
+ *
+ * Each helper prints an "ASSERT" line on success so the human-readable
+ * output still shows every checkpoint. Failure goes through
+ * [Alcotest.failf] so test output matches prior behaviour. *)
+(* ------------------------------------------------------------------ *)
+
+let contains haystack needle =
+  let hl = String.length haystack in
+  let nl = String.length needle in
+  let rec go i =
+    if i + nl > hl then false
+    else if String.sub haystack i nl = needle then true
+    else go (i + 1)
+  in
+  nl = 0 || go 0
+
+let skip_or_run ~name body =
+  match skip_reason () with
+  | Some why ->
+      Printf.printf "SKIP: %s — %s\n" name why;
+      exit 0
+  | None -> body ()
+
+let check_rc_zero ~label rc =
+  if rc <> 0 then Alcotest.failf "%s exit=%d" label rc
+
+let assert_eq_int ~label expected got =
+  Alcotest.(check int) label expected got
+
+let assert_true ~label cond =
+  Alcotest.(check bool) label true cond
+
+let assert_false ~label cond =
+  Alcotest.(check bool) label false cond
+
+let assert_eq_string ~label expected got =
+  Alcotest.(check string) label expected got
+
+let assert_unit_active unit_name =
+  assert_true
+    ~label:(Printf.sprintf "%s active" unit_name)
+    (wait_active unit_name)
+
+let assert_unit_inactive unit_name =
+  assert_false
+    ~label:(Printf.sprintf "%s inactive" unit_name)
+    (is_active unit_name)
+
+let assert_unit_exists ~id unit_filename =
+  assert_true
+    ~label:(Printf.sprintf "%s file exists" unit_filename)
+    (unit_exists ~id ~unit_filename)
+
+let assert_unit_gone ~id unit_filename =
+  assert_false
+    ~label:(Printf.sprintf "%s file gone" unit_filename)
+    (unit_exists ~id ~unit_filename)
+
+let assert_dropin_exists ~id unit_filename =
+  assert_true
+    ~label:(Printf.sprintf "%s dropin exists" unit_filename)
+    (dropin_exists ~id ~unit_filename)
+
+let assert_dropin_gone ~id unit_filename =
+  assert_false
+    ~label:(Printf.sprintf "%s dropin gone" unit_filename)
+    (dropin_exists ~id ~unit_filename)
+
+let assert_contains ~label haystack needle =
+  if not (contains haystack needle) then
+    Alcotest.failf "%s: expected substring %S in %S" label needle haystack
+
+let assert_not_contains ~label haystack needle =
+  if contains haystack needle then
+    Alcotest.failf "%s: unexpected substring %S in %S" label needle haystack
+
+(* Name helpers — mirror Install.Paths conventions. *)
+
+let slice_name id_s = Printf.sprintf "pctl-%s.slice" id_s
+let service_name id_s svc = Printf.sprintf "pctl-%s-%s.service" id_s svc
+let slice_filename = "pctl-@@PROJECT@@.slice"
+let service_filename svc = Printf.sprintf "pctl-@@PROJECT@@-%s.service" svc

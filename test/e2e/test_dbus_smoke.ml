@@ -16,16 +16,6 @@
 
 module S = Systemctl
 
-let skip_reason : string option =
-  match Sys.getenv_opt "DBUS_SESSION_BUS_ADDRESS" with
-  | None -> Some "DBUS_SESSION_BUS_ADDRESS unset"
-  | Some _ ->
-      let uid = Unix.getuid () in
-      let xdg_runtime = Printf.sprintf "/run/user/%d" uid in
-      if not (Sys.file_exists xdg_runtime) then
-        Some (Printf.sprintf "%s not present" xdg_runtime)
-      else None
-
 let valid_states =
   [
     Schema.Active; Schema.Inactive; Schema.Failed;
@@ -60,16 +50,12 @@ let test_unit_state_reads_a_valid_variant () =
     "at least one of the candidate units returned a state" true !any_read
 
 let () =
-  match skip_reason with
-  | Some why ->
-      Printf.printf "SKIP: dbus smoke — %s\n" why;
-      exit 0
-  | None ->
-      Alcotest.run "pctl dbus smoke"
+  Harness.skip_or_run ~name:"dbus smoke" @@ fun () ->
+  Alcotest.run "pctl dbus smoke"
+    [
+      ( "dbus",
         [
-          ( "dbus",
-            [
-              Alcotest.test_case "unit_state returns a valid Schema.state"
-                `Quick test_unit_state_reads_a_valid_variant;
-            ] );
-        ]
+          Alcotest.test_case "unit_state returns a valid Schema.state"
+            `Quick test_unit_state_reads_a_valid_variant;
+        ] );
+    ]
