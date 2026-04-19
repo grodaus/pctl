@@ -40,7 +40,7 @@ let () =
     set_db s;
     Eio_main.run @@ fun env ->
     Eio.Switch.run @@ fun sw ->
-    Cli.Common.with_connection ~env ~sw (fun conn ->
+    Cli.Pipeline.with_connection ~env ~sw (fun conn ->
         match State.Projects.get_by_id conn ~id:id_s with
         | Some r -> Option.value r.host ~default:""
         | None -> "")

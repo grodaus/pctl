@@ -7,6 +7,13 @@ module type SYSTEMCTL = sig
   type t
 
   val connect : sw:Eio.Switch.t -> Eio_unix.Stdenv.base -> t
+
+  (* Best-effort release of the handle. Idempotent; safe to call even
+   * after the owning switch has released. Pipeline wraps every
+   * [connect] in [Fun.protect ~finally:close] so the Dbus dispatch
+   * fiber drains before the outer switch tears down. *)
+  val close : t -> unit
+
   val start_unit : t -> unit:string -> unit
   val stop_unit : t -> unit:string -> unit
   val restart_unit : t -> unit:string -> unit

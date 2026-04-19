@@ -5,6 +5,6 @@
  (name cli)
  (public_name pctl.cli)
  (libraries schema identity render spec state systemctl install nix_build plan
-            probe gc yojson
+            probe gc clock yojson
             eio eio.unix eio_main unix)
  (preprocess (pps ppx_deriving_yojson)))

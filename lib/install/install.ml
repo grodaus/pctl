@@ -22,7 +22,12 @@
 (* ------------------------------------------------------------------ *)
 
 module Paths = struct
-  let user_control : string =
+  (* [user_control] is recomputed on each call. The prior top-level
+   * [let user_control : string = ...] evaluated at module-load time,
+   * which made tests that own their XDG_RUNTIME_DIR brittle: by the
+   * time the test's [putenv] ran, [user_control] was frozen to
+   * whatever value the dev's login session had exported. *)
+  let user_control () : string =
     match Sys.getenv_opt "XDG_RUNTIME_DIR" with
     | None | Some "" ->
         raise
@@ -40,7 +45,7 @@ module Paths = struct
    * drop-in config file. All take the concrete unit filename
    * (pctl-<id>.slice, pctl-<id>-<svc>.service) — no placeholder tokens. *)
   let unit_path ~unit_filename : string =
-    Filename.concat user_control unit_filename
+    Filename.concat (user_control ()) unit_filename
 
   let dropin_dir ~unit_filename : string =
     unit_path ~unit_filename ^ ".d"
@@ -107,7 +112,7 @@ let service_dropin_body ~(id : Schema.project_id) ~(host : Schema.host) :
 
 module Install = struct
   (* Ensure user.control/ exists. *)
-  let ensure_control_dir () = mkdir_p Paths.user_control
+  let ensure_control_dir () = mkdir_p (Paths.user_control ())
 
   (* Write one slice, return (unit_filename, sha256). *)
   let write_slice ~(spec : Schema.spec) ~(id : Schema.project_id) :

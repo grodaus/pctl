@@ -1,0 +1,8 @@
+; Clock — wall-clock + boot-id source.
+;
+; Real reads /proc and Unix time; [frozen] builds a deterministic
+; instance for tests.
+(library
+ (name clock)
+ (public_name pctl.clock)
+ (libraries unix))

@@ -114,6 +114,10 @@ let restart_unit t ~unit:u =
 
 let daemon_reload _t = ()
 
+(* The In_mem handle holds no external resources; [close] is a no-op.
+ * Matches the signature contract used by Pipeline.with_handle. *)
+let close _t = ()
+
 (* The in-memory fake doesn't model the `failed` tombstone separately —
  * once a unit transitions back to Inactive it's "cleared" from the
  * real-systemd perspective too. Best-effort no-op matches the Dbus

@@ -23,7 +23,6 @@
  * Empty registry: prints "no projects registered" to stderr and exits 0
  * with an empty body on stdout (keeps stdout JSON-parseable as "[]"). *)
 
-open Common
 
 (* Wire-format row — one per registered project. Consumers (tuor,
  * humans, tests) read these by field name; order matches the Nushell
@@ -76,8 +75,8 @@ let render_table rows : string =
     |> String.concat ""
 
 let run ~sw ~env ?(json = false) () : int =
-  run_with_errors (fun () ->
-      with_connection ~env ~sw (fun conn ->
+  Pipeline.run (fun () ->
+      Pipeline.with_connection ~env ~sw (fun conn ->
           let rows = Gc.report ~conn in
           if rows = [] then begin
             prerr_endline "no projects registered";

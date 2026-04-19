@@ -64,3 +64,34 @@ let print_out_paths ~attr ?path ~env ~sw () : string =
                 exit_code = 128 + s;
                 stderr = buf_sink_to_string stderr_buf;
               }))
+
+(* Nix port — Pipeline.Make depends on this signature.
+ * [Real] uses [print_out_paths] + a best-effort slurp of the spec.json
+ * bytes (for persistence into the projects registry). Tests substitute
+ * a stub that returns canned bytes without shelling out to nix. *)
+
+module type S = sig
+  val out_path :
+    attr:string ->
+    path:string ->
+    env:Eio_unix.Stdenv.base ->
+    sw:Eio.Switch.t ->
+    string
+
+  val read_spec_blob : string -> string option
+end
+
+module Real : S = struct
+  let out_path ~attr ~path ~env ~sw =
+    print_out_paths ~attr ~path ~env ~sw ()
+
+  let read_spec_blob path =
+    try
+      let ic = open_in path in
+      Fun.protect
+        ~finally:(fun () -> close_in ic)
+        (fun () ->
+          let n = in_channel_length ic in
+          Some (really_input_string ic n))
+    with Sys_error _ -> None
+end

@@ -11,7 +11,7 @@ let () =
   let read_host () =
     Eio_main.run @@ fun env ->
     Eio.Switch.run @@ fun sw ->
-    Cli.Common.with_connection ~env ~sw (fun conn ->
+    Cli.Pipeline.with_connection ~env ~sw (fun conn ->
         match State.Projects.get_by_id conn ~id:id_s with
         | Some r -> Option.value r.host ~default:""
         | None -> "")
@@ -29,7 +29,7 @@ let () =
   let rows_equal =
     Eio_main.run @@ fun env ->
     Eio.Switch.run @@ fun sw ->
-    Cli.Common.with_connection ~env ~sw (fun conn ->
+    Cli.Pipeline.with_connection ~env ~sw (fun conn ->
         let m = State.Projects.load_manifest conn ~project_id:id_s in
         let rows = State.Projects.diff_manifest ~before:m ~after:m in
         List.for_all

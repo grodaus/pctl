@@ -1,4 +1,4 @@
-(test
- (name test_state)
- (libraries schema state caqti caqti-eio caqti-eio.unix
-            caqti-driver-sqlite3 eio eio_main uri alcotest))
+(tests
+ (names test_state test_pipeline_up)
+ (libraries schema state cli clock systemctl caqti caqti-eio caqti-eio.unix
+            caqti-driver-sqlite3 eio eio_main unix uri alcotest))

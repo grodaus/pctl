@@ -78,7 +78,7 @@ let split_lines s =
   | parts -> List.rev parts
 
 let run ?(force = false) () : int =
-  Common.run_with_errors (fun () ->
+  Pipeline.run (fun () ->
       let cwd = Sys.getcwd () in
       let target_flake = Filename.concat cwd "flake.nix" in
       let target_gitignore = Filename.concat cwd ".gitignore" in

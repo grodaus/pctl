@@ -187,7 +187,7 @@ let teardown (s : scratch) =
   let id = try Some (project_id s) with _ -> None in
   Eio_main.run (fun env ->
       Eio.Switch.run (fun sw ->
-          (try ignore (Cli.Down.run ~sw ~env ~path:s.project_dir ~quiet:true ())
+          (try ignore (Cli.Pipeline.Prod.down ~sw ~env ~path:s.project_dir ~quiet:true ())
            with _ -> ());
           match id with
           | None -> ()
@@ -242,23 +242,24 @@ let active_enter_ts unit_name =
   let _ = Unix.close_process_in ic in
   s
 
-(* Run `Cli.Up.run` against a scratch setup. Returns the exit code. *)
+(* Run `Cli.Pipeline.Prod.up` against a scratch setup. Returns the exit code. *)
 let up ~scratch =
   Eio_main.run @@ fun env ->
   Eio.Switch.run @@ fun sw ->
-  Cli.Up.run ~sw ~env ~tree:scratch.spec_path ~path:scratch.project_dir ()
+  Cli.Pipeline.Prod.up ~sw ~env ~tree:scratch.spec_path
+    ~path:scratch.project_dir ()
 
 let up_wait ?(timeout = 30) ~scratch () =
   Eio_main.run @@ fun env ->
   Eio.Switch.run @@ fun sw ->
-  Cli.Up.run ~sw ~env ~tree:scratch.spec_path ~path:scratch.project_dir
-    ~wait:true ~timeout ()
+  Cli.Pipeline.Prod.up ~sw ~env ~tree:scratch.spec_path
+    ~path:scratch.project_dir ~wait:true ~timeout ()
 
 let up_no_block ~scratch =
   Eio_main.run @@ fun env ->
   Eio.Switch.run @@ fun sw ->
-  Cli.Up.run ~sw ~env ~tree:scratch.spec_path ~path:scratch.project_dir
-    ~no_block:true ()
+  Cli.Pipeline.Prod.up ~sw ~env ~tree:scratch.spec_path
+    ~path:scratch.project_dir ~no_block:true ()
 
 (* Results/host — capture stdout so tests can inspect JSON / the printed
  * host line. Both reuse the project path baked into [scratch]. *)
@@ -295,7 +296,7 @@ let results ?(timeout = 30) ?(json = false) ~scratch () : int * string =
   with_captured_stdout (fun () ->
       Eio_main.run @@ fun env ->
       Eio.Switch.run @@ fun sw ->
-      Cli.Results.run ~sw ~env ~path:scratch.project_dir ~timeout ~json ())
+      Cli.Pipeline.Prod.results ~sw ~env ~path:scratch.project_dir ~timeout ~json ())
 
 let host ~scratch : int * string =
   with_captured_stdout (fun () ->
@@ -306,12 +307,13 @@ let host ~scratch : int * string =
 let reload ~scratch =
   Eio_main.run @@ fun env ->
   Eio.Switch.run @@ fun sw ->
-  Cli.Reload.run ~sw ~env ~tree:scratch.spec_path ~path:scratch.project_dir ()
+  Cli.Pipeline.Prod.reload ~sw ~env ~tree:scratch.spec_path
+    ~path:scratch.project_dir ()
 
 let down ~scratch =
   Eio_main.run @@ fun env ->
   Eio.Switch.run @@ fun sw ->
-  Cli.Down.run ~sw ~env ~path:scratch.project_dir ()
+  Cli.Pipeline.Prod.down ~sw ~env ~path:scratch.project_dir ()
 
 (* Helpers for logs / status / list / gc tests. *)
 

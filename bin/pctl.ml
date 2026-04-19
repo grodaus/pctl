@@ -55,7 +55,7 @@ let up_cmd =
   let run path tree nix no_block wait timeout =
     Eio_main.run @@ fun env ->
     Eio.Switch.run @@ fun sw ->
-    Cli.Up.run ~sw ~env ?tree ~nix ?path ~no_block ~wait ~timeout ()
+    Cli.Pipeline.Prod.up ~sw ~env ?tree ~nix ?path ~no_block ~wait ~timeout ()
   in
   let info = Cmd.info "up" ~doc:"Build, install units, start the slice." in
   Cmd.v info Term.(const run $ path_arg $ tree_arg $ nix_arg $ no_block $ wait $ timeout)
@@ -66,7 +66,7 @@ let reload_cmd =
   let run path tree nix =
     Eio_main.run @@ fun env ->
     Eio.Switch.run @@ fun sw ->
-    Cli.Reload.run ~sw ~env ?tree ~nix ?path ()
+    Cli.Pipeline.Prod.reload ~sw ~env ?tree ~nix ?path ()
   in
   let info =
     Cmd.info "reload"
@@ -79,7 +79,7 @@ let reload_cmd =
 let down_cmd =
   let run path =
     Eio_main.run @@ fun env ->
-    Eio.Switch.run @@ fun sw -> Cli.Down.run ~sw ~env ?path ()
+    Eio.Switch.run @@ fun sw -> Cli.Pipeline.Prod.down ~sw ~env ?path ()
   in
   let info = Cmd.info "down" ~doc:"Stop the slice, uninstall units." in
   Cmd.v info Term.(const run $ path_arg)
@@ -98,7 +98,7 @@ let results_cmd =
   let run path timeout json =
     Eio_main.run @@ fun env ->
     Eio.Switch.run @@ fun sw ->
-    Cli.Results.run ~sw ~env ?path ~timeout ~json ()
+    Cli.Pipeline.Prod.results ~sw ~env ?path ~timeout ~json ()
   in
   let info =
     Cmd.info "results"
@@ -128,7 +128,7 @@ let restart_cmd =
   in
   let run svc path =
     Eio_main.run @@ fun env ->
-    Eio.Switch.run @@ fun sw -> Cli.Restart.run ~sw ~env ~svc ?path ()
+    Eio.Switch.run @@ fun sw -> Cli.Pipeline.Prod.restart ~sw ~env ~svc ?path ()
   in
   let info = Cmd.info "restart" ~doc:"Restart a service (or the slice)." in
   Cmd.v info Term.(const run $ svc_arg $ path_arg)
