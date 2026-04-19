@@ -1,43 +1,26 @@
 (* Project identity — ported from the prior Nushell `derive-id` and
- * `allocate-host`. The Nushell implementation is the behavioural
- * oracle; the OCaml port must produce byte-identical ids and hosts for
- * every path so the binaries swap cleanly. See test/unit/test_identity.ml
- * for fixture-parity anchors. *)
+ * `allocate-host`. The Nushell implementation is the behavioural oracle;
+ * the OCaml port must produce byte-identical ids and hosts for every
+ * path so the binaries swap cleanly. See test/unit/test_identity.ml for
+ * fixture-parity anchors. *)
 
 open Schema
 
-(* ------------------------------------------------------------------ *)
-(* Path expansion — faithful port of Nushell's `path expand` for        *)
-(* absolute inputs. Normalizes ./ and ../ and collapses repeated        *)
-(* slashes. Does NOT resolve symlinks and does NOT require the path to  *)
-(* exist. Relative input is resolved against Sys.getcwd ().             *)
-(* ------------------------------------------------------------------ *)
-
-let split_path s =
-  let n = String.length s in
-  let rec loop i acc_start acc =
-    if i = n then
-      let seg = String.sub s acc_start (n - acc_start) in
-      List.rev (seg :: acc)
-    else if s.[i] = '/' then
-      let seg = String.sub s acc_start (i - acc_start) in
-      loop (i + 1) (i + 1) (seg :: acc)
-    else loop (i + 1) acc_start acc
-  in
-  loop 0 0 []
+(* Path expansion — faithful port of Nushell's `path expand`. Normalizes
+ * ./, ../ and repeated slashes; does NOT resolve symlinks and does NOT
+ * require the path to exist (so stdlib Filename.realpath / Unix.realpath
+ * are wrong here — they'd error on non-existing inputs). Relative input
+ * is resolved against [Sys.getcwd]. *)
 
 let normalize_absolute path =
-  let segs = split_path path in
+  let segs = String.split_on_char '/' path in
   let rec fold acc = function
     | [] -> List.rev acc
-    | "" :: tl -> fold acc tl
-    | "." :: tl -> fold acc tl
-    | ".." :: tl -> (
-        match acc with _ :: rest -> fold rest tl | [] -> fold [] tl)
+    | ("" | ".") :: tl -> fold acc tl
+    | ".." :: tl -> fold (match acc with _ :: rest -> rest | [] -> []) tl
     | seg :: tl -> fold (seg :: acc) tl
   in
-  let parts = fold [] segs in
-  "/" ^ String.concat "/" parts
+  "/" ^ String.concat "/" (fold [] segs)
 
 let path_expand raw =
   let abs =
@@ -46,19 +29,7 @@ let path_expand raw =
   in
   normalize_absolute abs
 
-let basename_of_path p =
-  let p =
-    if String.length p > 1 && p.[String.length p - 1] = '/' then
-      String.sub p 0 (String.length p - 1)
-    else p
-  in
-  match String.rindex_opt p '/' with
-  | Some i -> String.sub p (i + 1) (String.length p - i - 1)
-  | None -> p
-
-(* ------------------------------------------------------------------ *)
-(* sanitize-basename — 1:1 port of pctl/lib/identity.nu:1-10.           *)
-(* ------------------------------------------------------------------ *)
+(* sanitize-basename — 1:1 port of pctl/lib/identity.nu:1-10. *)
 
 let sanitize_basename raw =
   let lowered =
@@ -100,33 +71,29 @@ let sanitize_basename raw =
   in
   if trimmed = "" then "project" else trimmed
 
-(* ------------------------------------------------------------------ *)
-(* hash8 — first 8 hex chars of SHA-256 over the absolute path.         *)
-(* ------------------------------------------------------------------ *)
+(* hash8 — first 8 hex chars of SHA-256 over the absolute path. *)
 
 let sha256_hex s = Digestif.SHA256.(digest_string s |> to_hex)
 let hash8 abs_path = String.sub (sha256_hex abs_path) 0 8
 
 let derive ~path =
   let abs = path_expand path in
-  let raw_base = basename_of_path abs in
-  let base = sanitize_basename raw_base in
-  let h8 = hash8 abs in
-  Project_id.of_string_exn (base ^ "_" ^ h8)
+  let base = sanitize_basename (Filename.basename abs) in
+  Project_id.of_string_exn (base ^ "_" ^ hash8 abs)
 
-(* ------------------------------------------------------------------ *)
-(* Host allocator.                                                     *)
-(*                                                                    *)
-(*   first_byte  = first raw byte of MD5(id)                          *)
-(*   initial     = first_byte mod 253 + 2     → range 2..254          *)
-(*   walk        = bump ..254 then wrap to 2; stop at first free slot *)
-(*   exhaustion  = raise after 253 tries                              *)
-(*                                                                    *)
-(* MD5 is a seed, not a cryptographic choice — inherited from the     *)
-(* Nushell implementation for byte-compat with existing allocations.  *)
-(* ------------------------------------------------------------------ *)
+(* Host allocator.
+ *
+ *   first_byte  = first raw byte of MD5(id)
+ *   initial     = first_byte mod 253 + 2     → range 2..254
+ *   walk        = bump ..254 then wrap to 2; stop at first free slot
+ *   exhaustion  = raise after 253 tries
+ *
+ * MD5 is a seed, not a cryptographic choice — inherited from the Nushell
+ * implementation for byte-compat with existing allocations. *)
 
 module Host_alloc = struct
+  module Host_set = Set.Make (String)
+
   let md5_first_byte s =
     let d = Digestif.MD5.(digest_string s |> to_raw_string) in
     Char.code d.[0]
@@ -135,9 +102,12 @@ module Host_alloc = struct
 
   let allocate ~(id : project_id) ~(taken : host list) : host =
     let id_s = Project_id.to_string id in
-    let taken_set = List.map Host.to_string taken in
-    let first_byte = md5_first_byte id_s in
-    let initial = (first_byte mod 253) + 2 in
+    let taken_set =
+      List.fold_left
+        (fun s h -> Host_set.add (Host.to_string h) s)
+        Host_set.empty taken
+    in
+    let initial = (md5_first_byte id_s mod 253) + 2 in
     let rec loop n tries =
       if tries >= 253 then
         raise
@@ -153,10 +123,9 @@ module Host_alloc = struct
                 }))
       else
         let candidate = host_for n in
-        if not (List.mem candidate taken_set) then Host.of_string_exn candidate
-        else
-          let next = if n < 254 then n + 1 else 2 in
-          loop next (tries + 1)
+        if not (Host_set.mem candidate taken_set) then
+          Host.of_string_exn candidate
+        else loop (if n < 254 then n + 1 else 2) (tries + 1)
     in
     loop initial 0
 end
