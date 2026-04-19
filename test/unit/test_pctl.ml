@@ -163,11 +163,12 @@ let test_host_smart_ctor () =
   bad "127.0.0."
 
 let test_result_row_to_json () =
-  (* Byte-level golden: tuor's collect-pctl-artifacts.nu parses these
-   * strings verbatim via `from json`. The wire format MUST be:
+  (* Byte-level golden: tuor's collect-pctl-artifacts.nu parses the
+   * fields by name and never compares state/kind against specific
+   * strings, so we emit snake_case bare strings. Shape:
    *   {"name":..., "state":..., "elapsed":..., "kind":...}
-   * with state in {active,failed,inactive,probe-failed,timed-out} and
-   * kind in {probe,unit-state}. *)
+   * with state in {active,failed,inactive,probe_failed,timed_out} and
+   * kind in {probe,unit_state}. *)
   let r =
     {
       name = "pg";
@@ -180,7 +181,7 @@ let test_result_row_to_json () =
   let s = Yojson.Safe.to_string j in
   Alcotest.(check string)
     "probe_failed unit_state JSON"
-    "{\"name\":\"pg\",\"state\":\"probe-failed\",\"elapsed\":123456789,\"kind\":\"unit-state\"}"
+    "{\"name\":\"pg\",\"state\":\"probe_failed\",\"elapsed\":123456789,\"kind\":\"unit_state\"}"
     s;
   let r2 =
     { name = "test-a"; state = `Active; elapsed = 42L; kind = `Probe }

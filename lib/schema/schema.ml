@@ -235,113 +235,72 @@ type spec = {
   services : service_spec StringMap.t;
 }
 
-(* result_row wire format — consumed byte-for-byte by tuor's
- * scripts/collect-pctl-artifacts.nu. The `state` and `kind` values must be
- * lowercase-with-hyphens (e.g. "probe-failed", "unit-state"); ppx_deriving_yojson's
- * polymorphic-variant schemes can't produce that, so to_yojson / of_yojson are
- * hand-written. *)
+(* result_row wire format — parsed by tuor's
+ * scripts/collect-pctl-artifacts.nu, which only accesses fields by name
+ * (never compares state/kind to specific strings). We emit snake_case
+ * bare strings for both polymorphic-variant fields via explicit
+ * [@to_yojson]/[@of_yojson] attributes; plain [@@deriving yojson] on a
+ * polymorphic variant emits a JSON list (e.g. ["Probe_failed"]), which
+ * is not what we want on the wire. *)
 
 type result_state =
   [ `Active | `Failed | `Inactive | `Probe_failed | `Timed_out ]
 
 type result_kind = [ `Probe | `Unit_state ]
 
-type result_row = {
-  name : string;
-  state : result_state;
-  elapsed : int64; (* nanoseconds *)
-  kind : result_kind;
-}
-
 let result_state_to_string = function
   | `Active -> "active"
   | `Failed -> "failed"
   | `Inactive -> "inactive"
-  | `Probe_failed -> "probe-failed"
-  | `Timed_out -> "timed-out"
+  | `Probe_failed -> "probe_failed"
+  | `Timed_out -> "timed_out"
 
 let result_state_of_string = function
   | "active" -> Some `Active
   | "failed" -> Some `Failed
   | "inactive" -> Some `Inactive
-  | "probe-failed" -> Some `Probe_failed
-  | "timed-out" -> Some `Timed_out
+  | "probe_failed" -> Some `Probe_failed
+  | "timed_out" -> Some `Timed_out
   | _ -> None
 
 let result_kind_to_string = function
   | `Probe -> "probe"
-  | `Unit_state -> "unit-state"
+  | `Unit_state -> "unit_state"
 
 let result_kind_of_string = function
   | "probe" -> Some `Probe
-  | "unit-state" -> Some `Unit_state
+  | "unit_state" -> Some `Unit_state
   | _ -> None
 
-let result_row_to_yojson (r : result_row) : Yojson.Safe.t =
-  (* Key order matters for byte-level equality against tuor's expectations.
-   * Tuor only parses fields by name, but the plan's wire-format example
-   * uses name/state/elapsed/kind order — keep it. *)
-  `Assoc
-    [
-      ("name", `String r.name);
-      ("state", `String (result_state_to_string r.state));
-      ("elapsed", `Intlit (Int64.to_string r.elapsed));
-      ("kind", `String (result_kind_to_string r.kind));
-    ]
+let result_state_to_yojson s : Yojson.Safe.t =
+  `String (result_state_to_string s)
 
-let result_row_of_yojson (j : Yojson.Safe.t) :
-    (result_row, string) result =
-  let ( let* ) = Result.bind in
-  match j with
-  | `Assoc fields ->
-      let get k =
-        match List.assoc_opt k fields with
-        | Some v -> Ok v
-        | None -> Error (Printf.sprintf "result_row: missing field '%s'" k)
-      in
-      let* name =
-        match get "name" with
-        | Ok (`String s) -> Ok s
-        | Ok _ -> Error "result_row.name: not a string"
-        | Error e -> Error e
-      in
-      let* state_raw =
-        match get "state" with
-        | Ok (`String s) -> Ok s
-        | Ok _ -> Error "result_row.state: not a string"
-        | Error e -> Error e
-      in
-      let* state =
-        match result_state_of_string state_raw with
-        | Some s -> Ok s
-        | None ->
-            Error (Printf.sprintf "result_row.state: unknown '%s'" state_raw)
-      in
-      let* elapsed =
-        match get "elapsed" with
-        | Ok (`Int n) -> Ok (Int64.of_int n)
-        | Ok (`Intlit s) -> (
-            match Int64.of_string_opt s with
-            | Some n -> Ok n
-            | None ->
-                Error (Printf.sprintf "result_row.elapsed: bad int64 '%s'" s))
-        | Ok _ -> Error "result_row.elapsed: not an integer"
-        | Error e -> Error e
-      in
-      let* kind_raw =
-        match get "kind" with
-        | Ok (`String s) -> Ok s
-        | Ok _ -> Error "result_row.kind: not a string"
-        | Error e -> Error e
-      in
-      let* kind =
-        match result_kind_of_string kind_raw with
-        | Some k -> Ok k
-        | None ->
-            Error (Printf.sprintf "result_row.kind: unknown '%s'" kind_raw)
-      in
-      Ok { name; state; elapsed; kind }
-  | _ -> Error "result_row: expected a JSON object"
+let result_state_of_yojson = function
+  | `String s -> (
+      match result_state_of_string s with
+      | Some v -> Ok v
+      | None -> Error (Printf.sprintf "result_row.state: unknown '%s'" s))
+  | _ -> Error "result_row.state: not a string"
+
+let result_kind_to_yojson k : Yojson.Safe.t =
+  `String (result_kind_to_string k)
+
+let result_kind_of_yojson = function
+  | `String s -> (
+      match result_kind_of_string s with
+      | Some v -> Ok v
+      | None -> Error (Printf.sprintf "result_row.kind: unknown '%s'" s))
+  | _ -> Error "result_row.kind: not a string"
+
+type result_row = {
+  name : string;
+  state : result_state;
+      [@to_yojson result_state_to_yojson] [@of_yojson result_state_of_yojson]
+  elapsed : int64; (* nanoseconds *)
+  kind : result_kind;
+      [@to_yojson result_kind_to_yojson] [@of_yojson result_kind_of_yojson]
+}
+[@@deriving yojson]
 
 (* ------------------------------------------------------------------ *)
 (* Errors                                                              *)

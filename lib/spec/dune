@@ -1,4 +1,5 @@
 (library
  (name spec)
  (public_name pctl.spec)
- (libraries schema yojson))
+ (libraries schema yojson)
+ (preprocess (pps ppx_deriving_yojson)))
