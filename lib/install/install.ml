@@ -1,19 +1,12 @@
 (* Install — render the spec into user.control, create drop-ins, compute
  * the manifest.
  *
- * Oracle: pctl/lib/install.nu. Key invariants preserved byte-for-byte:
  *   1. Unit filename has @@PROJECT@@ substituted to the project id.
  *   2. .slice/.service files land directly in user.control/.
- *   3. Every unit gets a drop-in dir at "<unit_filename>.d/" containing
- *      a single file "pctl-runtime.conf".
- *   4. Slice drop-in body: "[Slice]\nEnvironment=PCTL_ID=<id>\n".
- *      Service drop-in body: "[Service]\nEnvironment=PCTL_HOST=<host>\n\
- *                             Environment=PCTL_ID=<id>\n".
- *   5. Only the manifest covers the main unit files (not drop-ins).
- *      Phase 4 brief says the returned manifest list includes both, but
- *      Nushell `compute-manifest` (units.nu:25-33) and the SQLite
- *      `manifest` table both key on the main file. Matching Nushell keeps
- *      `diff` output identical. See "Guessed semantics" in the report.
+ *   3. Each service gets a drop-in at "<unit>.d/pctl-runtime.conf"
+ *      carrying PCTL_HOST + PCTL_ID. Slices get no drop-in (Environment=
+ *      is [Service]-only; systemd warns otherwise).
+ *   4. The manifest covers main unit files only, not drop-ins.
  *
  * The content written to the main unit file is produced by Render.
  * This differs from Nushell (which copies pre-rendered bytes from a
@@ -60,10 +53,10 @@ let rec rm_rf p =
 
 (* ---- drop-in rendering ------------------------------------------ *)
 
-let slice_dropin_body ~(id : Schema.project_id) : string =
-  Printf.sprintf "[Slice]\nEnvironment=PCTL_ID=%s\n"
-    (Schema.Project_id.to_string id)
-
+(* Environment= is only valid under [Service]. Slices don't exec, so
+   they get no drop-in: systemd warns "Unknown key 'Environment' in
+   section [Slice], ignoring" if we try. The project_id is already
+   encoded in the slice filename. *)
 let service_dropin_body ~(id : Schema.project_id) ~(host : Schema.host) :
     string =
   Printf.sprintf "[Service]\nEnvironment=PCTL_HOST=%s\nEnvironment=PCTL_ID=%s\n"
@@ -87,11 +80,6 @@ module Install = struct
       Paths.slice_path ~id ~unit_filename:spec.slice.unit_filename
     in
     write_file ~path ~bytes;
-    (* Drop-in. *)
-    let dropin =
-      Paths.dropin_file ~id ~unit_filename:spec.slice.unit_filename
-    in
-    write_file ~path:dropin ~bytes:(slice_dropin_body ~id);
     (unit_filename, sha256_hex bytes)
 
   (* Write one service + its drop-in. *)
