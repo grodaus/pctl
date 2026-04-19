@@ -1,5 +1,7 @@
 # Ubiquitous Language
 
+> **Status note (2026-04-19):** pctl is mid-rewrite from Nushell to OCaml. The vocabulary below is frozen — every term here survives the rewrite — but the implementation files it refers to move. See [docs/src/plans/20260419-ocaml-rewrite.md](./docs/src/plans/20260419-ocaml-rewrite.md) for the phased plan. This document remains the source of truth for domain terminology throughout.
+
 ## Project lifecycle
 
 | Term              | Definition                                                                                                   | Aliases to avoid        |
