@@ -1,0 +1,46 @@
+# This file is committed manually to let `buildDunePackage` (nixpkgs) discover
+# the `pctl` package without needing `(generate_opam_files true)` in dune-project
+# (which would complicate the sandboxed nix build). Keep this file in lockstep
+# with the (package ...) stanza in dune-project.
+
+opam-version: "2.0"
+synopsis: "declarative Nix spec -> systemd --user units"
+maintainer: ["grodaus"]
+authors: ["grodaus"]
+homepage: "https://github.com/grodaus/pctl"
+bug-reports: "https://github.com/grodaus/pctl/issues"
+
+build: [
+  ["dune" "subst"] {dev}
+  [
+    "dune"
+    "build"
+    "-p"
+    name
+    "-j"
+    jobs
+    "@install"
+    "@runtest" {with-test}
+    "@doc" {with-doc}
+  ]
+]
+
+depends: [
+  "ocaml" {>= "5.0"}
+  "dune" {>= "3.0"}
+  "cmdliner"
+  "eio"
+  "eio_main"
+  "caqti"
+  "caqti-eio"
+  "caqti-driver-sqlite3"
+  "ctypes"
+  "yojson"
+  "ppx_deriving_yojson"
+  "ppx_blob"
+  "logs"
+  "digestif"
+  "alcotest" {with-test}
+  "qcheck-core" {with-test}
+  "qcheck-alcotest" {with-test}
+]

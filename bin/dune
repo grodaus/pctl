@@ -1,0 +1,8 @@
+; pctl binary. Phase 4 wires the per-command dispatcher via `cli`.
+; libsystemd is pulled in transitively by `systemctl` so DT_NEEDED is
+; satisfied.
+(executable
+ (name pctl)
+ (public_name pctl)
+ (package pctl)
+ (libraries cmdliner cli systemctl eio eio_main eio.unix))

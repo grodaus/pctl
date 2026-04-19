@@ -1,0 +1,9 @@
+; Per-command entrypoints. Each file (up/reload/down/restart/logs/status/
+; ls/init/gc_cmd/common) exposes a `run` function callable from
+; bin/pctl.ml cmdliner wiring.
+(library
+ (name cli)
+ (public_name pctl.cli)
+ (libraries schema identity render spec state systemctl install nix_build plan
+            probe gc yojson
+            eio eio.unix eio_main unix))

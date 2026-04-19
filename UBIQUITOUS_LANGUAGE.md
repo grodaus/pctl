@@ -1,6 +1,10 @@
 # Ubiquitous Language
 
+This document is the source of truth for pctl's domain terminology. Every term here has a single canonical meaning; flagged synonyms exist only to call out drift that should not appear in code or docs. The OCaml modules under [`lib/`](./lib) implement these concepts — each table lists the primary module for the term where one exists.
+
 ## Project lifecycle
+
+_Implemented across [`lib/cli/`](./lib/cli) command modules; shared state in [`lib/state/`](./lib/state)._
 
 | Term              | Definition                                                                                                   | Aliases to avoid        |
 | ----------------- | ------------------------------------------------------------------------------------------------------------ | ----------------------- |
@@ -14,6 +18,8 @@
 
 ## Artifacts
 
+_Rendered by [`lib/render/`](./lib/render); written to disk by [`lib/install/`](./lib/install); manifest stored via [`lib/state/`](./lib/state)._
+
 | Term            | Definition                                                                                                                  | Aliases to avoid             |
 | --------------- | --------------------------------------------------------------------------------------------------------------------------- | ---------------------------- |
 | **Unit**        | A systemd unit file — either a **slice** or a **service** — emitted by pctl                                                 | File, config                 |
@@ -24,6 +30,8 @@
 | **User.control**| `$XDG_RUNTIME_DIR/systemd/user.control/` — the live unit directory systemd --user reads                                     | Install dir, runtime dir     |
 
 ## Identity & allocation
+
+_Derived by [`lib/identity/`](./lib/identity) (project id + host allocation); placeholders substituted in [`lib/render/`](./lib/render) and [`lib/install/`](./lib/install)._
 
 | Term             | Definition                                                                                                     | Aliases to avoid       |
 | ---------------- | -------------------------------------------------------------------------------------------------------------- | ---------------------- |
@@ -40,6 +48,8 @@
 
 ## Garbage collection
 
+_Implemented in [`lib/gc/`](./lib/gc); known markers written alongside the registry under [`lib/state/`](./lib/state)._
+
 | Term             | Definition                                                                                                                                | Aliases to avoid        |
 | ---------------- | ----------------------------------------------------------------------------------------------------------------------------------------- | ----------------------- |
 | **State dir**    | A directory under `$XDG_STATE_HOME` created by systemd from a service's `StateDirectory=pctl-@@PROJECT@@-<svc>` — persists across `down`  | StateDirectory, data dir |
@@ -49,6 +59,8 @@
 | **Unknown (gc)**| A **state dir** with no **known marker** — pre-existing leak or third-party `pctl-*` directory; reported only, never deleted automatically | Foreign                 |
 
 ## Reload diff
+
+_Computed in [`lib/plan/`](./lib/plan); applied via the [`lib/systemctl/`](./lib/systemctl) port._
 
 | Term                     | Definition                                                          | Aliases to avoid |
 | ------------------------ | ------------------------------------------------------------------- | ---------------- |
@@ -60,6 +72,8 @@
 
 ## Readiness
 
+_Implemented in [`lib/probe/`](./lib/probe) (parallel Eio fibers + dbus subscriptions)._
+
 | Term                 | Definition                                                                                                                      | Aliases to avoid           |
 | -------------------- | ------------------------------------------------------------------------------------------------------------------------------- | -------------------------- |
 | **Readiness probe**  | The `readinessProbe` spec field — an exec argv `pctl up --wait` polls until it exits 0                                          | Healthcheck, liveness probe |
@@ -68,6 +82,8 @@
 | **Wait**             | The `pctl up --wait` mode: after `up` starts every service, block until each is **ready** (or the overall timeout fires)        | Block, await               |
 
 ## Testing
+
+_Three layers in [`test/unit/`](./test/unit), [`test/integration/`](./test/integration), [`test/e2e/`](./test/e2e); see [CLAUDE.md](./CLAUDE.md) for run commands._
 
 | Term            | Definition                                                                                                             | Aliases to avoid   |
 | --------------- | ---------------------------------------------------------------------------------------------------------------------- | ------------------ |

@@ -1,0 +1,76 @@
+; Phase 3 + Phase 4 e2e tests — real systemd --user.
+;
+; Each test is declared as an `executable` (not `test`) so `dune runtest`
+; does NOT pick them up; the `e2e` alias rules below run them via
+; `dune build @e2e`. This keeps them out of the Nix sandbox — which has
+; no user dbus, no session, no /run/user/<uid> — and out of
+; `nix flake check`.
+;
+; Tests are gated at runtime on DBUS_SESSION_BUS_ADDRESS + /run/user/<uid>;
+; missing either → the test prints SKIP and exits 0. See test/e2e/harness.ml.
+
+(executable
+ (name test_dbus_smoke)
+ (modules test_dbus_smoke)
+ (libraries schema systemctl eio eio_main eio.unix alcotest unix))
+
+(library
+ (name e2e_harness)
+ (wrapped false)
+ (modules harness)
+ (libraries schema identity install cli state systemctl eio eio_main eio.unix
+            alcotest unix))
+
+(executables
+ (names test_up test_up_idempotent test_reload test_down test_worktree
+        test_workspace test_wait_active test_wait_probe test_wait_timeout
+        test_results test_host test_up_no_block test_up_no_wait
+        test_results_tuor_parity test_logs test_status test_list test_gc
+        test_gc_explicit test_pctl_no_gc)
+ (modules test_up test_up_idempotent test_reload test_down test_worktree
+          test_workspace test_wait_active test_wait_probe test_wait_timeout
+          test_results test_host test_up_no_block test_up_no_wait
+          test_results_tuor_parity test_logs test_status test_list test_gc
+          test_gc_explicit test_pctl_no_gc)
+ (libraries e2e_harness schema identity install cli state systemctl yojson
+            str eio eio_main eio.unix alcotest unix))
+
+; IMPORTANT: all tests run against the SAME systemd --user session.
+; Dune parallelises alias dependencies by default, which would cause
+; races (one test's install step clobbering another's; all tests see
+; the same XDG_RUNTIME_DIR). We collapse them into ONE rule whose action
+; runs every test sequentially — this is the simplest way to force
+; serialisation under `dune build @e2e`.
+
+(rule
+ (alias e2e)
+ (deps test_dbus_smoke.exe test_up.exe test_up_idempotent.exe
+       test_reload.exe test_down.exe test_worktree.exe test_workspace.exe
+       test_wait_active.exe test_wait_probe.exe test_wait_timeout.exe
+       test_results.exe test_host.exe test_up_no_block.exe
+       test_up_no_wait.exe test_results_tuor_parity.exe
+       test_logs.exe test_status.exe test_list.exe test_gc.exe
+       test_gc_explicit.exe test_pctl_no_gc.exe)
+ (action
+  (progn
+   (run ./test_dbus_smoke.exe)
+   (run ./test_up.exe)
+   (run ./test_up_idempotent.exe)
+   (run ./test_reload.exe)
+   (run ./test_down.exe)
+   (run ./test_worktree.exe)
+   (run ./test_workspace.exe)
+   (run ./test_wait_active.exe)
+   (run ./test_wait_probe.exe)
+   (run ./test_wait_timeout.exe)
+   (run ./test_results.exe)
+   (run ./test_host.exe)
+   (run ./test_up_no_block.exe)
+   (run ./test_up_no_wait.exe)
+   (run ./test_results_tuor_parity.exe)
+   (run ./test_logs.exe)
+   (run ./test_status.exe)
+   (run ./test_list.exe)
+   (run ./test_gc.exe)
+   (run ./test_gc_explicit.exe)
+   (run ./test_pctl_no_gc.exe))))

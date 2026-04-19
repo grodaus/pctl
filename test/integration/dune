@@ -1,0 +1,4 @@
+(test
+ (name test_state)
+ (libraries schema state caqti caqti-eio caqti-eio.unix
+            caqti-driver-sqlite3 eio eio_main uri alcotest))

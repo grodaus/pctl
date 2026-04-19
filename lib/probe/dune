@@ -1,0 +1,10 @@
+; Phase 5 — per-service readiness wait.
+;
+; `Probe.wait_service` blocks a single fiber until a service reaches
+; its terminal state; `Probe.wait_all` parallelises the per-service
+; wait across a Switch and returns one result_row per service. Both
+; honour an overall deadline shared across services.
+(library
+ (name probe)
+ (public_name pctl.probe)
+ (libraries schema install systemctl eio eio.unix mtime unix))

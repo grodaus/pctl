@@ -1,0 +1,6 @@
+[Unit]
+Description=pctl slice for demo_abc12345
+
+[Slice]
+CPUWeight=100
+MemoryMax=4G

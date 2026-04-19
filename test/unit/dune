@@ -1,0 +1,5 @@
+(tests
+ (names test_pctl test_systemctl_sig)
+ (libraries schema identity render state spec systemctl
+            eio eio_main eio.unix yojson alcotest qcheck-core qcheck-alcotest)
+ (deps (source_tree fixtures)))

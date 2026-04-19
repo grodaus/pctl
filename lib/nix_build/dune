@@ -1,0 +1,9 @@
+; Nix_build — shell out to `nix build --no-link --print-out-paths`.
+;
+; Uses Eio.Process so stderr is captured and returned in the
+; Nix_build_failed error variant. Callers pass the flake attribute
+; to build (e.g. ".#pctl") and optionally a project path to chdir to.
+(library
+ (name nix_build)
+ (public_name pctl.nix_build)
+ (libraries schema eio eio.unix eio_main))
