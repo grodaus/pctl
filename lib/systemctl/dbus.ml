@@ -305,6 +305,19 @@ let check_rc ~op ~unit:u ~err rc =
       (Schema.Pctl_error
          (Schema.Unit_op_failed { op; unit_ = u; reply = msg }))
 
+(* Raise Unit_op_failed if [rc < 0]. Used for non-sd_bus_error-populating
+ * calls (e.g. message_read, enter_container). *)
+let fail_on_neg_rc ~op ~unit:u rc =
+  if rc < 0 then
+    raise
+      (Schema.Pctl_error
+         (Schema.Unit_op_failed
+            {
+              op;
+              unit_ = u;
+              reply = Printf.sprintf "%s rc=%d" op rc;
+            }))
+
 let with_error f =
   let err = Sd_bus_error.make () in
   let err_p = C.addr err in
@@ -320,6 +333,13 @@ let with_reply f =
       if not (C.is_null r) then
         ignore ((Ffi.get ()).sd_bus_message_unref r))
     (fun () -> f reply)
+
+(* Allocate a string out-pointer, run [f], decode the C string into an
+ * OCaml string. Used by sd_bus_message_read callers. *)
+let read_cstring_out f =
+  let out = C.allocate C.(ptr_opt char) None in
+  f out;
+  cstring_of_ptr_opt (C.( !@ ) out)
 
 (* ------------------------------------------------------------------ *)
 (* Handle type + [connect].                                            *)
@@ -485,18 +505,9 @@ let get_unit_path t ~unit:u =
   in
   check_rc ~op:"GetUnit" ~unit:u ~err rc;
   let reply_msg = C.( !@ ) reply in
-  let out = C.allocate C.(ptr_opt char) None in
-  let rc2 = sd_bus_message_read_o reply_msg "o" out in
-  if rc2 < 0 then
-    raise
-      (Schema.Pctl_error
-         (Schema.Unit_op_failed
-            {
-              op = "GetUnit/read";
-              unit_ = u;
-              reply = Printf.sprintf "sd_bus_message_read(o) rc=%d" rc2;
-            }));
-  cstring_of_ptr_opt (C.( !@ ) out)
+  read_cstring_out (fun out ->
+      fail_on_neg_rc ~op:"GetUnit/read" ~unit:u
+        (sd_bus_message_read_o reply_msg "o" out))
 
 (* Properties.Get(unit_iface, "ActiveState") on the unit path. Returns
  * the string from the variant. *)
@@ -509,30 +520,15 @@ let read_active_state t ~unit:u ~path =
   in
   check_rc ~op:"Properties.Get" ~unit:u ~err rc;
   let reply_msg = C.( !@ ) reply in
-  (* reply is a single variant `v` containing `s`. Enter the v
-   * container, read the s, exit. *)
-  let rc_enter = sd_bus_message_enter_container reply_msg 'v' "s" in
-  if rc_enter < 0 then
-    raise
-      (Schema.Pctl_error
-         (Schema.Unit_op_failed
-            {
-              op = "ActiveState/enter_container";
-              unit_ = u;
-              reply = Printf.sprintf "rc=%d" rc_enter;
-            }));
-  let out = C.allocate C.(ptr_opt char) None in
-  let rc_read = sd_bus_message_read_s reply_msg "s" out in
-  if rc_read < 0 then
-    raise
-      (Schema.Pctl_error
-         (Schema.Unit_op_failed
-            {
-              op = "ActiveState/read";
-              unit_ = u;
-              reply = Printf.sprintf "rc=%d" rc_read;
-            }));
-  let s = cstring_of_ptr_opt (C.( !@ ) out) in
+  (* reply is a single variant `v` containing `s`. Enter the v container,
+   * read the s, exit. *)
+  fail_on_neg_rc ~op:"ActiveState/enter_container" ~unit:u
+    (sd_bus_message_enter_container reply_msg 'v' "s");
+  let s =
+    read_cstring_out (fun out ->
+        fail_on_neg_rc ~op:"ActiveState/read" ~unit:u
+          (sd_bus_message_read_s reply_msg "s" out))
+  in
   let _ = sd_bus_message_exit_container reply_msg in
   s
 
@@ -636,18 +632,8 @@ let install_match_rule_and_fiber t =
   let handler_root = ref (Obj.repr handler) in
   t.callback_roots := handler_root :: !(t.callback_roots);
   let slot_pp = C.allocate sd_bus_slot C.null in
-  let rc =
-    t.ffi.sd_bus_add_match t.bus slot_pp match_rule handler C.null
-  in
-  if rc < 0 then
-    raise
-      (Schema.Pctl_error
-         (Schema.Unit_op_failed
-            {
-              op = "sd_bus_add_match";
-              unit_ = "-";
-              reply = Printf.sprintf "rc=%d" rc;
-            }));
+  fail_on_neg_rc ~op:"sd_bus_add_match" ~unit:"-"
+    (t.ffi.sd_bus_add_match t.bus slot_pp match_rule handler C.null);
   let slot = C.( !@ ) slot_pp in
   t.slots := slot :: !(t.slots);
   Eio.Fiber.fork ~sw:t.sw (fun () -> dispatch_loop t);
