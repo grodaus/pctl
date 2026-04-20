@@ -24,4 +24,5 @@
   fpath
   alcotest
   qcheck-core
-  qcheck-alcotest))
+  qcheck-alcotest
+  bisect_ppx))

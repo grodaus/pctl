@@ -115,6 +115,7 @@
             alcotest
             qcheck-core
             qcheck-alcotest
+            bisect_ppx
           ];
 
           # `pctl init` reads templates/init/{flake.nix,.gitignore} at
@@ -155,7 +156,13 @@
         # the package's dep list.
         devShells.ci = pkgs.mkShell {
           inputsFrom = [pctlPkg];
-          nativeBuildInputs = [ocamlPackages.dune_3 ocamlPackages.ocaml];
+          nativeBuildInputs = [
+            ocamlPackages.dune_3
+            ocamlPackages.ocaml
+            # bisect_ppx: coverage via `dune test --instrument-with bisect_ppx`
+            # + `bisect-ppx-report html -o _coverage` (or `summary`).
+            ocamlPackages.bisect_ppx
+          ];
         };
 
         # Fixture derivations surfaced as `.#fixtures.<name>`; see

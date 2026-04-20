@@ -6,4 +6,5 @@
 (library
  (name nix_build)
  (public_name pctl.nix_build)
- (libraries schema eio eio.unix eio_main))
+ (libraries schema eio eio.unix eio_main)
+ (instrumentation (backend bisect_ppx)))

@@ -7,4 +7,5 @@
 (library
  (name unit_store)
  (public_name pctl.unit_store)
- (libraries schema unix))
+ (libraries schema unix)
+ (instrumentation (backend bisect_ppx)))

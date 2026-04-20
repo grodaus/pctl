@@ -5,4 +5,5 @@
  (name pctl)
  (public_name pctl)
  (package pctl)
- (libraries cmdliner cli systemctl eio eio_main eio.unix))
+ (libraries cmdliner cli systemctl eio eio_main eio.unix)
+ (instrumentation (backend bisect_ppx)))

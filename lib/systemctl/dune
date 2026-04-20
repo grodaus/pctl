@@ -12,4 +12,5 @@
  (name systemctl)
  (public_name pctl.systemctl)
  (libraries schema eio eio.unix ctypes ctypes-foreign)
- (c_library_flags (-lsystemd)))
+ (c_library_flags (-lsystemd))
+ (instrumentation (backend bisect_ppx)))

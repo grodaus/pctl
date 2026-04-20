@@ -1,4 +1,5 @@
 (library
  (name render)
  (public_name pctl.render)
- (libraries schema re))
+ (libraries schema re)
+ (instrumentation (backend bisect_ppx)))

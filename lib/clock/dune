@@ -5,4 +5,5 @@
 (library
  (name clock)
  (public_name pctl.clock)
- (libraries unix))
+ (libraries unix)
+ (instrumentation (backend bisect_ppx)))

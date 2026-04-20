@@ -7,4 +7,5 @@
 (library
  (name probe)
  (public_name pctl.probe)
- (libraries schema systemctl eio eio.unix mtime unix))
+ (libraries schema systemctl eio eio.unix mtime unix)
+ (instrumentation (backend bisect_ppx)))

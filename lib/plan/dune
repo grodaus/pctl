@@ -6,4 +6,5 @@
 (library
  (name plan)
  (public_name pctl.plan)
- (libraries schema))
+ (libraries schema)
+ (instrumentation (backend bisect_ppx)))

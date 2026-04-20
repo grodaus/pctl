@@ -1,4 +1,5 @@
 (library
  (name identity)
  (public_name pctl.identity)
- (libraries schema digestif digestif.c re))
+ (libraries schema digestif digestif.c re)
+ (instrumentation (backend bisect_ppx)))

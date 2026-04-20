@@ -5,4 +5,5 @@
  (preprocess (pps ppx_blob))
  (preprocessor_deps
   (file ../../migrations/001_init.sql)
-  (file ../../migrations/002_spec_blob.sql)))
+  (file ../../migrations/002_spec_blob.sql))
+ (instrumentation (backend bisect_ppx)))

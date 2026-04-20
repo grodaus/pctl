@@ -8,4 +8,5 @@
  (name lifecycle)
  (public_name pctl.lifecycle)
  (libraries schema render unit_store plan state systemctl
-            digestif digestif.c))
+            digestif digestif.c)
+ (instrumentation (backend bisect_ppx)))

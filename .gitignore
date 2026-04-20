@@ -3,3 +3,5 @@ result-*
 .direnv/
 .pctl/
 _build/
+_coverage/
+bisect*.coverage

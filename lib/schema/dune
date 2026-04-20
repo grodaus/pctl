@@ -2,4 +2,5 @@
  (name schema)
  (public_name pctl.schema)
  (libraries yojson fpath re)
- (preprocess (pps ppx_deriving_yojson)))
+ (preprocess (pps ppx_deriving_yojson))
+ (instrumentation (backend bisect_ppx)))
