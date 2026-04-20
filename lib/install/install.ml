@@ -2,7 +2,7 @@
  * the manifest.
  *
  *   1. Unit filenames are derived from the project id + service name
- *      (Schema.slice_filename / Schema.service_filename).
+ *      (Schema.Unit_filename.slice / Schema.Unit_filename.service).
  *   2. .slice/.service files land directly in user.control/.
  *   3. Each service gets a drop-in at "<unit>.d/pctl-runtime.conf"
  *      carrying PCTL_HOST + PCTL_ID. Slices get no drop-in (Environment=
@@ -118,9 +118,10 @@ module Install = struct
   let write_slice ~(spec : Schema.spec) ~(id : Schema.project_id) :
       string * string =
     let bytes = Render.slice ~slice:spec.slice ~id in
-    let unit_filename = Schema.slice_filename ~id in
-    write_file ~path:(Paths.unit_path ~unit_filename) ~bytes;
-    (unit_filename, sha256_hex bytes)
+    let unit_filename = Schema.Unit_filename.slice ~id in
+    let unit_filename_s = Schema.Unit_filename.to_string unit_filename in
+    write_file ~path:(Paths.unit_path ~unit_filename:unit_filename_s) ~bytes;
+    (unit_filename_s, sha256_hex bytes)
 
   (* Write one service + its drop-in. *)
   let write_service ~(service : Schema.service_spec)
@@ -128,13 +129,14 @@ module Install = struct
       string * string =
     let bytes = Render.service ~service ~id ~project_path in
     let unit_filename =
-      Schema.service_filename ~id ~service_name:service.name
+      Schema.Unit_filename.service ~id ~service:service.name
     in
-    write_file ~path:(Paths.unit_path ~unit_filename) ~bytes;
+    let unit_filename_s = Schema.Unit_filename.to_string unit_filename in
+    write_file ~path:(Paths.unit_path ~unit_filename:unit_filename_s) ~bytes;
     write_file
-      ~path:(Paths.dropin_file ~unit_filename)
+      ~path:(Paths.dropin_file ~unit_filename:unit_filename_s)
       ~bytes:(service_dropin_body ~id ~host);
-    (unit_filename, sha256_hex bytes)
+    (unit_filename_s, sha256_hex bytes)
 
   let write_units ~(spec : Schema.spec) ~(id : Schema.project_id)
       ~project_path ~(host : Schema.host) : Schema.manifest =

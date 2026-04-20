@@ -435,7 +435,9 @@ let assert_not_contains ~label haystack needle =
 let slice_name id_s = Printf.sprintf "pctl-%s.slice" id_s
 let service_name id_s svc = Printf.sprintf "pctl-%s-%s.service" id_s svc
 
-let slice_filename_for ~(id : Schema.project_id) = Schema.slice_filename ~id
+let slice_filename_for ~(id : Schema.project_id) =
+  Schema.Unit_filename.to_string (Schema.Unit_filename.slice ~id)
 
 let service_filename_for ~(id : Schema.project_id) ~service_name =
-  Schema.service_filename ~id ~service_name
+  Schema.Unit_filename.to_string
+    (Schema.Unit_filename.service ~id ~service:service_name)

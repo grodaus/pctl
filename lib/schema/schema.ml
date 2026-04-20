@@ -295,6 +295,55 @@ end
 
 type project_path = Project_path.t
 
+(* ---- unit_filename ---------------------------------------------------- *)
+
+(* The leaf filename of a systemd unit managed by pctl. Two ctors produce
+ * canonical values by construction:
+ *   Unit_filename.slice   ~id             → pctl-<id>.slice
+ *   Unit_filename.service ~id ~service    → pctl-<id>-<service>.service
+ * [of_string_exn] is the SQLite-hydration path: manifest rows are stored
+ * as plain strings and validated back into [t] when they cross into typed
+ * code. The only invariant checked is "non-empty, no '/'" — anything
+ * containing a path separator is a programmer error or a corrupted row. *)
+
+module Unit_filename : sig
+  type t = private string
+
+  val slice : id:Project_id.t -> t
+  val service : id:Project_id.t -> service:string -> t
+  val of_string_exn : string -> t
+  val of_string_opt : string -> t option
+  val to_string : t -> string
+  val equal : t -> t -> bool
+  val compare : t -> t -> int
+end = struct
+  type t = string
+
+  let parse s =
+    if String.length s = 0 then Error "empty unit filename"
+    else if String.contains s '/' then Error "unit filename contains '/'"
+    else Ok s
+
+  let slice ~(id : Project_id.t) : t =
+    Printf.sprintf "pctl-%s.slice" (Project_id.to_string id)
+
+  let service ~(id : Project_id.t) ~(service : string) : t =
+    Printf.sprintf "pctl-%s-%s.service" (Project_id.to_string id) service
+
+  let of_string_exn s =
+    match parse s with
+    | Ok s -> s
+    | Error reason ->
+        raise (Pctl_error (Identity_invalid { path = s; reason }))
+
+  let of_string_opt s = match parse s with Ok s -> Some s | Error _ -> None
+  let to_string s = s
+  let equal = String.equal
+  let compare = String.compare
+end
+
+type unit_filename = Unit_filename.t
+
 (* ------------------------------------------------------------------ *)
 (* Records                                                             *)
 (* ------------------------------------------------------------------ *)
@@ -341,13 +390,9 @@ type spec = {
   services : service_spec StringMap.t;
 }
 
-(* Canonical filename derivations — one source of truth used by Render,
- * Install, and every test/harness that needs the concrete names. *)
-let slice_filename ~(id : project_id) : string =
-  Printf.sprintf "pctl-%s.slice" (Project_id.to_string id)
-
-let service_filename ~(id : project_id) ~(service_name : string) : string =
-  Printf.sprintf "pctl-%s-%s.service" (Project_id.to_string id) service_name
+(* Canonical filename derivations live in [Unit_filename] above — one
+ * source of truth used by Render, Install, and every test/harness that
+ * needs the concrete names. *)
 
 (* result_row wire format — parsed by tuor's
  * scripts/collect-pctl-artifacts.nu, which only accesses fields by name

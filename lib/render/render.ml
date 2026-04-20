@@ -110,7 +110,7 @@ let service ~(service : service_spec) ~(id : project_id) ~project_path =
    * already set. *)
   let user_keys = List.map fst sc in
   let defaults =
-    ("Slice", Schema.slice_filename ~id)
+    ("Slice", Schema.Unit_filename.to_string (Schema.Unit_filename.slice ~id))
     :: workspace_keys ~ws:service.workspace ~project_path
   in
   let extra =

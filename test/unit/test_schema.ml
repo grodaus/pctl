@@ -194,6 +194,45 @@ let test_project_path_home_unset_raises () =
            (Identity_invalid { path = "~/x"; reason = "HOME not set" }))
         (fun () -> ignore (Project_path.of_raw "~/x")))
 
+(* Unit_filename tests — smart ctors produce canonical leaves by
+   construction; of_string_* rejects '/' and empty strings. *)
+
+let test_unit_filename_slice () =
+  let id = Project_id.of_string_exn "pctl_736e4605" in
+  Alcotest.(check string)
+    "slice leaf" "pctl-pctl_736e4605.slice"
+    (Unit_filename.to_string (Unit_filename.slice ~id))
+
+let test_unit_filename_service () =
+  let id = Project_id.of_string_exn "pctl_736e4605" in
+  Alcotest.(check string)
+    "service leaf" "pctl-pctl_736e4605-web.service"
+    (Unit_filename.to_string (Unit_filename.service ~id ~service:"web"))
+
+let test_unit_filename_of_string_ok () =
+  let s = "pctl-foo.slice" in
+  Alcotest.(check string)
+    "round-trip" s
+    (Unit_filename.to_string (Unit_filename.of_string_exn s))
+
+let test_unit_filename_of_string_slash_raises () =
+  Alcotest.check_raises "slash raises"
+    (Pctl_error
+       (Identity_invalid
+          { path = "path/with/slash"; reason = "unit filename contains '/'" }))
+    (fun () -> ignore (Unit_filename.of_string_exn "path/with/slash"))
+
+let test_unit_filename_of_string_empty_raises () =
+  Alcotest.check_raises "empty raises"
+    (Pctl_error
+       (Identity_invalid { path = ""; reason = "empty unit filename" }))
+    (fun () -> ignore (Unit_filename.of_string_exn ""))
+
+let test_unit_filename_of_string_opt_slash () =
+  Alcotest.(check bool)
+    "slash → None" true
+    (Option.is_none (Unit_filename.of_string_opt "with/slash"))
+
 let test_result_row_to_json () =
   (* Byte-level golden: tuor's collect-pctl-artifacts.nu parses the
    * fields by name and never compares state/kind against specific
@@ -335,6 +374,17 @@ let () =
             test_project_path_relative;
           test_case "project_path HOME unset raises" `Quick
             test_project_path_home_unset_raises;
+          test_case "unit_filename slice leaf" `Quick test_unit_filename_slice;
+          test_case "unit_filename service leaf" `Quick
+            test_unit_filename_service;
+          test_case "unit_filename of_string_exn round-trip" `Quick
+            test_unit_filename_of_string_ok;
+          test_case "unit_filename of_string_exn slash raises" `Quick
+            test_unit_filename_of_string_slash_raises;
+          test_case "unit_filename of_string_exn empty raises" `Quick
+            test_unit_filename_of_string_empty_raises;
+          test_case "unit_filename of_string_opt slash → None" `Quick
+            test_unit_filename_of_string_opt_slash;
           test_case "result_row → JSON golden" `Quick test_result_row_to_json;
           test_case "result_row round-trip" `Quick test_result_row_of_json;
           test_case "error rendering" `Quick test_error_rendering;
