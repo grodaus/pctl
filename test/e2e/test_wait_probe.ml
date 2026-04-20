@@ -5,7 +5,11 @@ let bash = "/run/current-system/sw/bin/bash"
 
 let () =
   Harness.skip_or_run ~name:"test_wait_probe" @@ fun () ->
-  let tmp_base = try Sys.getenv "TMPDIR" with Not_found -> "/tmp" in
+  (* Flag path must be visible to the systemd --user daemon that runs
+   * the service: /run/user/<uid> (not $TMPDIR, which is dune's private
+   * build sandbox on CI and unreachable from the user daemon). Same
+   * rationale as Harness.fresh_tmpdir. *)
+  let tmp_base = Printf.sprintf "/run/user/%d" (Unix.getuid ()) in
   let flag =
     Filename.concat tmp_base
       (Printf.sprintf "pctl-wait-probe-%d-%f.flag" (Unix.getpid ())
