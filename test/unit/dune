@@ -9,10 +9,11 @@
 ; shows the concern name in its heading.
 (tests
  (names test_schema test_identity test_render test_manifest test_spec
-        test_systemctl_sig test_unit_store)
+        test_systemctl_sig test_unit_store test_probe test_gc)
  (modules test_schema test_identity test_render test_manifest test_spec
-          test_systemctl_sig test_unit_store)
+          test_systemctl_sig test_unit_store test_probe test_gc)
  (libraries schema identity render state spec systemctl unit_store
+            probe gc mtime str
             eio eio_main eio.unix yojson alcotest qcheck-core qcheck-alcotest
             test_helpers)
  (deps (source_tree fixtures)))
