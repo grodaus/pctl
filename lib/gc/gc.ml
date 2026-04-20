@@ -55,12 +55,15 @@ module Make (M : Systemctl.S) = struct
   let remove_project ~(conn : State.Db.t) ~(handle : M.t)
       (row : State.Projects.t) : unit =
     let id_s = row.id in
+    let id = Schema.Project_id.of_string_exn id_s in
     (* Load the stored manifest so we stop + delete the right unit files. *)
     let manifest =
       try State.Projects.load_manifest conn ~project_id:id_s
       with Failure _ | Schema.Pctl_error _ -> []
     in
-    let slice_unit = Printf.sprintf "pctl-%s.slice" id_s in
+    let slice_unit =
+      Schema.Unit_filename.to_string (Schema.Unit_filename.slice ~id)
+    in
     ignore_best_effort (fun () -> M.stop_unit handle ~unit:slice_unit);
     List.iter
       (fun (uf, _) ->
@@ -75,7 +78,6 @@ module Make (M : Systemctl.S) = struct
         Install.Install.remove_units filenames;
         (* Also try to remove the slice file — some paths through the
          * codebase store the slice in the manifest, but be defensive. *)
-        let id = Schema.Project_id.of_string_exn id_s in
         Install.Install.remove_units [ Schema.Unit_filename.slice ~id ]);
     ignore_best_effort (fun () -> M.daemon_reload handle);
     (* Wipe the manifest + project row. *)

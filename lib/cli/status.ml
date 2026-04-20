@@ -9,10 +9,10 @@ let run ~sw ~env ~svc ?path () : int =
   Pipeline.run @@ fun () ->
   let project_path = Pipeline.resolve_path path in
   let id = Identity.derive ~path:project_path in
-  let id_s = Schema.Project_id.to_string id in
   let unit_ =
-    if svc = "" then Printf.sprintf "pctl-%s.slice" id_s
-    else Printf.sprintf "pctl-%s-%s.service" id_s svc
+    Schema.Unit_filename.to_string
+      (if svc = "" then Schema.Unit_filename.slice ~id
+       else Schema.Unit_filename.service ~id ~service:svc)
   in
   let args = [ "systemctl"; "--user"; "status"; unit_ ] in
   let process_mgr = Eio.Stdenv.process_mgr env in

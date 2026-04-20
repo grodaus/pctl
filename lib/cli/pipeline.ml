@@ -308,7 +308,9 @@ module Make (P : PORTS) = struct
                       id_s project_path;
                 }))
       end;
-      let slice_unit = Printf.sprintf "pctl-%s.slice" id_s in
+      let slice_unit =
+        Schema.Unit_filename.to_string (Schema.Unit_filename.slice ~id)
+      in
       with_handle ~env (fun h ->
           (try P.Systemctl.stop_unit h ~unit:slice_unit
            with Schema.Pctl_error _ -> ());
@@ -329,10 +331,10 @@ module Make (P : PORTS) = struct
   let restart ~sw ~env ~svc ?path () : int =
     run @@ fun () ->
     with_registered ~sw ~env ~sweep:true ?path @@ fun _conn id ->
-    let id_s = Schema.Project_id.to_string id in
     let unit_ =
-      if svc = "" then Printf.sprintf "pctl-%s.slice" id_s
-      else Printf.sprintf "pctl-%s-%s.service" id_s svc
+      Schema.Unit_filename.to_string
+        (if svc = "" then Schema.Unit_filename.slice ~id
+         else Schema.Unit_filename.service ~id ~service:svc)
     in
     with_handle ~env (fun h -> P.Systemctl.restart_unit h ~unit:unit_);
     Printf.printf "restarted %s\n" unit_
