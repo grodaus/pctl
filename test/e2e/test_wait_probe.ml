@@ -1,7 +1,15 @@
 (* e2e parity for tests/e2e/wait_test.nu — probe-based readiness. A flag
  * file appears after 500ms; --wait must block until the probe sees it. *)
 
+(* Absolute paths: the systemd --user session on the privileged CI
+ * runner starts with a minimal PATH that does not include
+ * /run/current-system/sw/bin, so bare `sleep` / `touch` in ExecStart
+ * resolve to nothing and the ExecStart silently falls through. On the
+ * dev box PATH leaks through the user's login shell so this worked
+ * by accident. *)
 let bash = "/run/current-system/sw/bin/bash"
+let sleep = "/run/current-system/sw/bin/sleep"
+let touch = "/run/current-system/sw/bin/touch"
 
 let () =
   Harness.skip_or_run ~name:"test_wait_probe" @@ fun () ->
@@ -31,9 +39,9 @@ let () =
           ("Type", "simple");
           ( "ExecStart",
             Printf.sprintf
-              "%s -c 'sleep 0.5; touch %s; exec %s -c \"while true; \
-               do sleep 3600; done\"'"
-              bash flag bash );
+              "%s -c '%s 0.5; %s %s; exec %s -c \"while true; do %s 3600; \
+               done\"'"
+              bash sleep touch flag bash sleep );
         ];
       workspace = None;
     }
