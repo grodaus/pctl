@@ -89,10 +89,8 @@ module Sd_bus_error = struct
     C.setf s need_free_f 0;
     s
 
-  let to_string s =
-    let msg_ptr = C.getf s message_f in
-    match msg_ptr with
-    | None -> "(no message)"
+  let decode = function
+    | None -> None
     | Some p ->
         let rec len i =
           if C.( !@ ) (C.( +@ ) p i) = '\x00' then i else len (i + 1)
@@ -102,7 +100,13 @@ module Sd_bus_error = struct
         for i = 0 to n - 1 do
           Bytes.unsafe_set b i (C.( !@ ) (C.( +@ ) p i))
         done;
-        Bytes.unsafe_to_string b
+        Some (Bytes.unsafe_to_string b)
+
+  (* (name, message) — either field may be NULL. sd-bus populates name
+   * for D-Bus-level errors (e.g. org.freedesktop.systemd1.NoSuchUnit)
+   * and message for libsystemd-generated complaints; transport failures
+   * often leave both unset. *)
+  let parts s = (decode (C.getf s name_f), decode (C.getf s message_f))
 end
 
 (* ------------------------------------------------------------------ *)
@@ -298,12 +302,91 @@ let cstring_of_ptr_opt = function
       done;
       Bytes.unsafe_to_string b
 
+(* Decode a negative sd-bus return code into a human-readable message.
+ * sd-bus follows the libc convention of returning -errno on failure, but
+ * surfaces it as a raw integer — callers get "-123" without context. We
+ * resolve strerror(errno), name the errno where the platform exposes
+ * strerrorname_np, and attach a hint for the common "no user bus
+ * reachable" failure modes so CI logs are self-diagnosing. *)
+let strerror_ffi =
+  F.foreign "strerror" C.(int @-> returning (ptr_opt char))
+
+(* strerrorname_np is a GNU extension (glibc ≥ 2.32). musl and older
+ * glibc don't ship it — bind lazily and tolerate its absence. *)
+let strerrorname_np : int -> string option =
+  let f_opt =
+    try
+      Some
+        (F.foreign "strerrorname_np"
+           C.(int @-> returning (ptr_opt char)))
+    with _ -> None
+  in
+  fun errno ->
+    match f_opt with
+    | None -> None
+    | Some f -> (
+        match f errno with
+        | None -> None
+        | Some _ as p -> Some (cstring_of_ptr_opt p))
+
+(* Errno integers the hint branch cares about, sourced from <errno.h>
+ * via the pctl_errno C stub — keeps us off hardcoded Linux ABI values.
+ * Exposed as OCaml primitives (not dlsym'd symbols) so they link
+ * without needing -rdynamic on the final executable. *)
+external pctl_errno_enoent : unit -> int = "pctl_errno_ENOENT" [@@noalloc]
+
+external pctl_errno_econnrefused : unit -> int = "pctl_errno_ECONNREFUSED"
+  [@@noalloc]
+
+external pctl_errno_enomedium : unit -> int = "pctl_errno_ENOMEDIUM"
+  [@@noalloc]
+
+let errno_ENOENT = pctl_errno_enoent ()
+let errno_ECONNREFUSED = pctl_errno_econnrefused ()
+let errno_ENOMEDIUM = pctl_errno_enomedium ()
+
+let user_bus_hint errno =
+  if errno = errno_ENOENT || errno = errno_ECONNREFUSED
+     || errno = errno_ENOMEDIUM
+  then
+    Some
+      "no user bus reachable — check that `systemd --user` is running \
+       and $XDG_RUNTIME_DIR points at /run/user/$(id -u). On CI \
+       runners, enable lingering with `loginctl enable-linger $USER` \
+       or wrap the command in `dbus-run-session --`."
+  else None
+
+let format_sd_bus_err op rc =
+  let errno = if rc < 0 then -rc else rc in
+  let desc = cstring_of_ptr_opt (strerror_ffi errno) in
+  let named =
+    match strerrorname_np errno with
+    | Some name -> Printf.sprintf "%s: %s" name desc
+    | None -> desc
+  in
+  let base = Printf.sprintf "%s returned -%d (%s)" op errno named in
+  match user_bus_hint errno with
+  | Some hint -> base ^ " — " ^ hint
+  | None -> base
+
+(* Format whatever sd-bus gave us on a failed call. If the sd_bus_error
+ * struct was populated we prefer its name + message (grep-friendly
+ * D-Bus error names like org.freedesktop.systemd1.NoSuchUnit come
+ * through here). Transport-level failures often leave the struct empty
+ * — in that case we fall back to decoding the raw errno. *)
+let format_bus_reply ~op ~err rc =
+  match Sd_bus_error.parts (C.( !@ ) err) with
+  | Some name, Some message -> Printf.sprintf "%s: %s" name message
+  | None, Some message -> message
+  | Some name, None -> name ^ " (no message)"
+  | None, None -> format_sd_bus_err op rc
+
 let check_rc ~op ~unit:u ~err rc =
   if rc < 0 then
-    let msg = Sd_bus_error.to_string (C.( !@ ) err) in
     raise
       (Schema.Pctl_error
-         (Schema.Unit_op_failed { op; unit_ = u; reply = msg }))
+         (Schema.Unit_op_failed
+            { op; unit_ = u; reply = format_bus_reply ~op ~err rc }))
 
 (* Raise Unit_op_failed if [rc < 0]. Used for non-sd_bus_error-populating
  * calls (e.g. message_read, enter_container). *)
@@ -312,11 +395,7 @@ let fail_on_neg_rc ~op ~unit:u rc =
     raise
       (Schema.Pctl_error
          (Schema.Unit_op_failed
-            {
-              op;
-              unit_ = u;
-              reply = Printf.sprintf "%s rc=%d" op rc;
-            }))
+            { op; unit_ = u; reply = format_sd_bus_err op rc }))
 
 let with_error f =
   let err = Sd_bus_error.make () in
@@ -435,9 +514,7 @@ let connect ~sw env =
       (Schema.Pctl_error
          (Schema.Bus_connect_failed
             {
-              msg =
-                Printf.sprintf "sd_bus_default_user/open_user returned %d"
-                  rc;
+              msg = format_sd_bus_err "sd_bus_default_user/open_user" rc;
             }));
   let bus = C.( !@ ) bus_pp in
   let t =

@@ -13,4 +13,5 @@
  (public_name pctl.systemctl)
  (libraries schema eio eio.unix ctypes ctypes-foreign)
  (c_library_flags (-lsystemd))
+ (foreign_stubs (language c) (names pctl_errno))
  (instrumentation (backend bisect_ppx)))
