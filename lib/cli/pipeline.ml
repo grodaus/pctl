@@ -218,7 +218,7 @@ module Make (P : PORTS) = struct
     let old_manifest = State.Projects.load_manifest conn ~project_id:id_s in
     let project_path_s = Schema.Project_path.to_string project in
     let new_manifest =
-      Install.Install.write_units ~spec ~id ~project_path:project_path_s ~host
+      Install.Install.write_units ~spec ~id ~project_path:project ~host
     in
     let diff =
       State.Projects.diff_manifest ~before:old_manifest ~after:new_manifest

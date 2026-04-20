@@ -91,7 +91,9 @@ let description_for ~service_name ~id =
   Printf.sprintf "pctl service %s for %s" service_name
     (Project_id.to_string id)
 
-let service ~(service : service_spec) ~(id : project_id) ~project_path =
+let service ~(service : service_spec) ~(id : project_id)
+    ~(project_path : project_path) =
+  let project_path_s = Project_path.to_string project_path in
   let sc = service.service_config in
   (* User-supplied Description wins over our generated default. *)
   let user_description = List.assoc_opt "Description" sc in
@@ -111,7 +113,7 @@ let service ~(service : service_spec) ~(id : project_id) ~project_path =
   let user_keys = List.map fst sc in
   let defaults =
     ("Slice", Schema.Unit_filename.to_string (Schema.Unit_filename.slice ~id))
-    :: workspace_keys ~ws:service.workspace ~project_path
+    :: workspace_keys ~ws:service.workspace ~project_path:project_path_s
   in
   let extra =
     List.filter (fun (k, _) -> not (List.mem k user_keys)) defaults

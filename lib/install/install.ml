@@ -125,8 +125,8 @@ module Install = struct
 
   (* Write one service + its drop-in. *)
   let write_service ~(service : Schema.service_spec)
-      ~(id : Schema.project_id) ~(host : Schema.host) ~project_path :
-      string * string =
+      ~(id : Schema.project_id) ~(host : Schema.host)
+      ~(project_path : Schema.project_path) : string * string =
     let bytes = Render.service ~service ~id ~project_path in
     let unit_filename =
       Schema.Unit_filename.service ~id ~service:service.name
@@ -139,7 +139,8 @@ module Install = struct
     (unit_filename_s, sha256_hex bytes)
 
   let write_units ~(spec : Schema.spec) ~(id : Schema.project_id)
-      ~project_path ~(host : Schema.host) : Schema.manifest =
+      ~(project_path : Schema.project_path) ~(host : Schema.host) :
+      Schema.manifest =
     ensure_control_dir ();
     let slice_entry = write_slice ~spec ~id in
     let service_entries =

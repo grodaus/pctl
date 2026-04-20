@@ -23,7 +23,8 @@ let test_render_simple_service () =
     }
   in
   let got =
-    Render.service ~service:svc ~id:id_demo ~project_path:"/home/me/project"
+    Render.service ~service:svc ~id:id_demo
+      ~project_path:(Schema.Project_path.of_raw "/home/me/project")
   in
   let expected =
     Test_helpers.read_file (Test_helpers.render_fixture "simple_service.expected")
@@ -50,7 +51,8 @@ let test_render_service_with_workspace () =
     }
   in
   let got =
-    Render.service ~service:svc ~id:id_demo ~project_path:"/home/me/project"
+    Render.service ~service:svc ~id:id_demo
+      ~project_path:(Schema.Project_path.of_raw "/home/me/project")
   in
   let expected =
     Test_helpers.read_file
