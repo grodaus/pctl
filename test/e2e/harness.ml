@@ -19,9 +19,18 @@ let skip_reason () : string option =
         Some (Printf.sprintf "%s not present" xdg_runtime)
       else None
 
-(* Make an absolute tmpdir. The caller is responsible for rm -rf. *)
+(* Make an absolute tmpdir. The caller is responsible for rm -rf.
+ *
+ * Base = /run/user/<uid>, NOT $TMPDIR. On CI, `dune build @e2e` runs
+ * inside a nix-shell build sandbox whose $TMPDIR is a private per-
+ * build directory; the systemd --user daemon runs OUTSIDE that
+ * sandbox and cannot see it — so workspace services with
+ * BindPaths=<tmpdir>/project fail with 226/NAMESPACE. /run/user/<uid>
+ * is the user-scoped runtime dir (owned by the session's systemd
+ * --user, always visible to it), guaranteed present by
+ * [skip_reason] above. *)
 let fresh_tmpdir prefix =
-  let base = try Sys.getenv "TMPDIR" with Not_found -> "/tmp" in
+  let base = Printf.sprintf "/run/user/%d" (Unix.getuid ()) in
   let rec loop i =
     let candidate =
       Filename.concat base
