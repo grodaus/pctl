@@ -9,4 +9,4 @@
 (library
  (name install)
  (public_name pctl.install)
- (libraries schema render digestif digestif.c unix))
+ (libraries schema render unit_store digestif digestif.c))

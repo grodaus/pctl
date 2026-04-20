@@ -1,0 +1,10 @@
+; Unit_store — port abstracting the filesystem layout for rendered unit
+; files and their drop-ins.
+;
+; Fs adapter owns $XDG_RUNTIME_DIR/systemd/user.control — the tmpfs-backed
+; path systemd --user reads unit definitions from. In_mem adapter (phase 2)
+; is a hashtbl-backed fake for integration tests.
+(library
+ (name unit_store)
+ (public_name pctl.unit_store)
+ (libraries schema unix))
