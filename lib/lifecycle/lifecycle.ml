@@ -42,6 +42,20 @@ type report = {
 let sha256_hex (bytes : string) : string =
   Digestif.SHA256.(digest_string bytes |> to_hex)
 
+(* Hash both the main unit bytes AND its drop-in so a drop-in-only
+   change (e.g. a host reallocation that only rewrites
+   pctl-runtime.conf) surfaces as [Changed] in the next diff. Before
+   this phase the manifest hashed [main] alone, so a host bounce
+   silently missed the reload. The NUL separator keeps the hash
+   injective across {main="a", dropin="b"} vs {main="ab", dropin=""}.
+
+   Side effect: the first reload after a deploy sees every unit as
+   Changed once, because existing manifests were computed under the
+   old formula. One-time churn, acceptable per RFC #4. *)
+let hash_entry ~(main : string) ~(dropin : string option) : string =
+  let dropin_bytes = Option.value dropin ~default:"" in
+  sha256_hex (main ^ "\x00" ^ dropin_bytes)
+
 let service_dropin_body ~(id : Schema.project_id) ~(host : Schema.host) :
     string =
   Printf.sprintf
@@ -70,9 +84,9 @@ module Write_all (US : Unit_store.S) = struct
              in
              let dropin = service_dropin_body ~id:ctx.id ~host:ctx.host in
              US.write us ~unit_ { main = bytes; dropin = Some dropin };
-             (unit_, sha256_hex bytes))
+             (unit_, hash_entry ~main:bytes ~dropin:(Some dropin)))
     in
-    (slice_unit, sha256_hex slice_bytes) :: service_rows
+    (slice_unit, hash_entry ~main:slice_bytes ~dropin:None) :: service_rows
     |> List.sort (fun (a, _) (b, _) -> Schema.Unit_filename.compare a b)
 end
 

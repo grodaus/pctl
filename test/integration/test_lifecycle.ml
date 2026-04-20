@@ -113,6 +113,41 @@ let test_up_idempotent () =
         row.action)
     r2.diff
 
+(* Phase 4 guarantee: if only the drop-in bytes change (here: the host
+   allocated to the project rotates), the manifest diff must report
+   the affected services as [Changed]. Before drop-in hashing the
+   main-unit bytes were identical across host changes, so a host
+   rotation silently skipped the reload. *)
+let test_reload_dropin_only_change () =
+  with_sandbox @@ fun ~sw:_ ~conn ~handle ~us ->
+  let s = spec_of_services [ svc_simple "web"; svc_simple "db" ] in
+  let _ = L.up ~conn ~handle ~unit_store:us ~ctx ~spec:s () in
+  let host_new = Schema.Host.of_string_exn "127.0.0.99" in
+  let ctx_new = { ctx with host = host_new } in
+  let r =
+    L.reload ~conn ~handle ~unit_store:us ~ctx:ctx_new ~spec:(Some s) ()
+  in
+  let by_action =
+    List.fold_left
+      (fun (changed, other) (row : Schema.plan_row) ->
+        match row.action with
+        | Schema.Changed -> (row :: changed, other)
+        | _ -> (changed, row :: other))
+      ([], []) r.diff
+  in
+  let changed, other = by_action in
+  (* The slice's drop-in is always None (Environment= is Service-only),
+     so the slice's hash is host-independent and should stay Unchanged. *)
+  Alcotest.(check int) "2 services Changed on host rotation" 2
+    (List.length changed);
+  Alcotest.(check bool)
+    "slice Unchanged" true
+    (List.exists
+       (fun (r : Schema.plan_row) ->
+         Schema.Unit_filename.equal r.unit_ slice_unit
+         && r.action = Schema.Unchanged)
+       other)
+
 let test_down_after_up () =
   with_sandbox @@ fun ~sw:_ ~conn ~handle ~us ->
   let s = spec_of_services [ svc_simple "web" ] in
@@ -140,6 +175,8 @@ let () =
         [
           Alcotest.test_case "up fresh" `Quick test_up_fresh;
           Alcotest.test_case "up idempotent" `Quick test_up_idempotent;
+          Alcotest.test_case "reload drop-in only change" `Quick
+            test_reload_dropin_only_change;
           Alcotest.test_case "down after up" `Quick test_down_after_up;
         ] );
     ]
