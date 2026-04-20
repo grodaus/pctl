@@ -192,6 +192,109 @@ end
 
 type host = Host.t
 
+(* ---- project_path ----------------------------------------------------- *)
+
+(* Missing env vars expand to empty (POSIX sh). Every other step is
+ * legible from the code. *)
+
+module Project_path : sig
+  type t = private Fpath.t
+
+  val of_raw : string -> t
+  val of_raw_opt : string -> t option
+  val to_string : t -> string
+  val to_fpath : t -> Fpath.t
+  val equal : t -> t -> bool
+  val compare : t -> t -> int
+end = struct
+  type t = Fpath.t
+
+  let env_var_re =
+    let id_head = Re.alt [ Re.alpha; Re.char '_' ] in
+    let id_tail = Re.rep (Re.alt [ Re.alnum; Re.char '_' ]) in
+    Re.compile
+      (Re.alt
+         [
+           Re.seq
+             [
+               Re.char '$';
+               Re.char '{';
+               Re.group (Re.seq [ id_head; id_tail ]);
+               Re.char '}';
+             ];
+           Re.seq
+             [ Re.char '$'; Re.group (Re.seq [ id_head; id_tail ]) ];
+         ])
+
+  let expand_env s =
+    Re.replace env_var_re
+      ~f:(fun g ->
+        let name =
+          try Re.Group.get g 1
+          with Not_found -> (
+            try Re.Group.get g 2 with Not_found -> "")
+        in
+        match Sys.getenv_opt name with Some v -> v | None -> "")
+      s
+
+  let expand_tilde s =
+    if String.length s = 0 || s.[0] <> '~' then Ok s
+    else if String.length s = 1 then
+      match Sys.getenv_opt "HOME" with
+      | Some h -> Ok h
+      | None -> Error "HOME not set"
+    else if s.[1] = '/' then
+      match Sys.getenv_opt "HOME" with
+      | Some h -> Ok (h ^ String.sub s 1 (String.length s - 1))
+      | None -> Error "HOME not set"
+    else Error "~user syntax is not supported"
+
+  (* Fpath.normalize preserves a leading "//" (POSIX allows
+   * implementation-defined semantics there), so we collapse slash runs
+   * before handing the string to Fpath — matters when env-var
+   * substitution leaves empty segments (e.g. "/$NOPE/x" → "//x"). *)
+  let collapse_slashes_re = Re.compile (Re.rep1 (Re.char '/'))
+  let collapse_slashes s = Re.replace_string collapse_slashes_re ~by:"/" s
+
+  let parse raw =
+    match expand_tilde raw with
+    | Error e -> Error e
+    | Ok tilde -> (
+        let expanded = expand_env tilde in
+        let rooted =
+          if String.length expanded > 0 && expanded.[0] = '/' then expanded
+          else Filename.concat (Sys.getcwd ()) expanded
+        in
+        let squashed = collapse_slashes rooted in
+        match Fpath.v squashed with
+        | exception Invalid_argument msg -> Error msg
+        | p ->
+            let n = Fpath.normalize p in
+            if Fpath.is_abs n then Ok n
+            else
+              Error
+                (Printf.sprintf "normalized path '%s' is not absolute"
+                   (Fpath.to_string n)))
+
+  let of_raw raw =
+    match parse raw with
+    | Ok n -> n
+    | Error reason -> raise (Pctl_error (Identity_invalid { path = raw; reason }))
+
+  let of_raw_opt raw = match parse raw with Ok n -> Some n | Error _ -> None
+
+  let to_string p =
+    let s = Fpath.to_string p in
+    let len = String.length s in
+    if len > 1 && s.[len - 1] = '/' then String.sub s 0 (len - 1) else s
+
+  let to_fpath p = p
+  let equal = Fpath.equal
+  let compare = Fpath.compare
+end
+
+type project_path = Project_path.t
+
 (* ------------------------------------------------------------------ *)
 (* Records                                                             *)
 (* ------------------------------------------------------------------ *)

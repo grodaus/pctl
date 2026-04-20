@@ -21,6 +21,7 @@
   logs
   digestif
   re
+  fpath
   alcotest
   qcheck-core
   qcheck-alcotest))

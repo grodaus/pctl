@@ -99,6 +99,101 @@ let test_host_smart_ctor () =
   bad "";
   bad "127.0.0."
 
+(* Project_path tests — smart ctor behaviour (tilde expansion, env-var
+ * substitution, normalize, absolute-assert). *)
+
+let test_project_path_idempotent () =
+  let inputs =
+    [ "/a/b"; "/foo"; "/a/b/../c"; "/a/./b"; "/a//b"; "/" ]
+  in
+  List.iter
+    (fun p ->
+      let once = Project_path.to_string (Project_path.of_raw p) in
+      let twice = Project_path.to_string (Project_path.of_raw once) in
+      Alcotest.(check string) ("idempotent: " ^ p) once twice)
+    inputs
+
+let test_project_path_tilde () =
+  Test_helpers.with_env ~name:"HOME" ~value:(Some "/home/x") (fun () ->
+      Alcotest.(check string)
+        "~/foo" "/home/x/foo"
+        (Project_path.to_string (Project_path.of_raw "~/foo"));
+      Alcotest.(check string)
+        "~" "/home/x"
+        (Project_path.to_string (Project_path.of_raw "~")))
+
+let test_project_path_env_subst () =
+  Test_helpers.with_env ~name:"PCTL_TEST_FOO" ~value:(Some "bar") (fun () ->
+      Test_helpers.with_env ~name:"PCTL_TEST_NOPE" ~value:None (fun () ->
+          Alcotest.(check string)
+            "/$FOO/baz" "/bar/baz"
+            (Project_path.to_string
+               (Project_path.of_raw "/$PCTL_TEST_FOO/baz"));
+          Alcotest.(check string)
+            "${FOO} braced" "/bar/baz"
+            (Project_path.to_string
+               (Project_path.of_raw "/${PCTL_TEST_FOO}/baz"));
+          (* Missing var expands to empty → "/" + "/x" → "//x" →
+           * normalize → "/x". *)
+          Alcotest.(check string)
+            "/$NOPE/x" "/x"
+            (Project_path.to_string
+               (Project_path.of_raw "/$PCTL_TEST_NOPE/x"))))
+
+let test_project_path_normalize () =
+  Alcotest.(check string)
+    "dotdot" "/a/c"
+    (Project_path.to_string (Project_path.of_raw "/a/b/../c"));
+  Alcotest.(check string)
+    "dot" "/a"
+    (Project_path.to_string (Project_path.of_raw "/./a"));
+  Alcotest.(check string)
+    "double slash" "/a/b"
+    (Project_path.to_string (Project_path.of_raw "/a//b"))
+
+let test_project_path_relative () =
+  Test_helpers.with_tmpdir (fun cwd ->
+      let got = Project_path.to_string (Project_path.of_raw "sub") in
+      Alcotest.(check string)
+        "relative resolves vs cwd"
+        (Filename.concat cwd "sub")
+        got)
+
+(* Reuse the same [arb_path] shape as test_identity — absolute, 1..4
+ * segments, ASCII-ish. *)
+let arb_path =
+  let open QCheck in
+  let char_gen =
+    Gen.oneof_weighted
+      [
+        (10, Gen.char_range 'a' 'z');
+        (10, Gen.char_range 'A' 'Z');
+        (5, Gen.char_range '0' '9');
+        (2, Gen.return '_');
+        (2, Gen.return '-');
+      ]
+  in
+  let segment = Gen.string_size ~gen:char_gen (Gen.int_range 1 10) in
+  let path_gen =
+    let open Gen in
+    let* n = int_range 1 4 in
+    let* segs = list_size (return n) segment in
+    return ("/" ^ String.concat "/" segs)
+  in
+  make ~print:(fun s -> s) path_gen
+
+let prop_project_path_is_abs =
+  QCheck.Test.make ~count:200 ~name:"Project_path.of_raw result is absolute"
+    arb_path (fun p ->
+      Fpath.is_abs (Project_path.to_fpath (Project_path.of_raw p)))
+
+let test_project_path_home_unset_raises () =
+  Test_helpers.with_env ~name:"HOME" ~value:None (fun () ->
+      Alcotest.check_raises "~/x with HOME unset"
+        (Pctl_error
+           (Identity_invalid { path = "~/x"; reason = "HOME not set" }))
+        (fun () -> ignore (Project_path.of_raw "~/x")))
+
 let test_result_row_to_json () =
   (* Byte-level golden: tuor's collect-pctl-artifacts.nu parses the
    * fields by name and never compares state/kind against specific
@@ -229,9 +324,21 @@ let () =
           test_case "class strings" `Quick test_class_strings;
           test_case "project_id smart ctor" `Quick test_project_id_smart_ctor;
           test_case "host smart ctor" `Quick test_host_smart_ctor;
+          test_case "project_path idempotent" `Quick
+            test_project_path_idempotent;
+          test_case "project_path tilde expansion" `Quick
+            test_project_path_tilde;
+          test_case "project_path env-var substitution" `Quick
+            test_project_path_env_subst;
+          test_case "project_path normalize" `Quick test_project_path_normalize;
+          test_case "project_path relative vs cwd" `Quick
+            test_project_path_relative;
+          test_case "project_path HOME unset raises" `Quick
+            test_project_path_home_unset_raises;
           test_case "result_row → JSON golden" `Quick test_result_row_to_json;
           test_case "result_row round-trip" `Quick test_result_row_of_json;
           test_case "error rendering" `Quick test_error_rendering;
           test_case "error exit codes" `Quick test_error_exit_codes;
-        ] );
+        ]
+        @ List.map QCheck_alcotest.to_alcotest [ prop_project_path_is_abs ] );
     ]

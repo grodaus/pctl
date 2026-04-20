@@ -99,6 +99,10 @@
             # substitution and basename sanitization (replaces the
             # Nushell-parity hand-rolled Buffer state machines).
             re
+            # Fpath: opaque path types (Project_path, Store_tree) in
+            # lib/schema/ use Fpath for tested lexical normalization and
+            # is_abs enforcement. See issue #2.
+            fpath
           ];
 
           # `ocaml-build` in `checks` below builds without tests to keep the

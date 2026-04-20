@@ -35,3 +35,65 @@ let write_temp_file ~prefix ~contents =
   output_string oc contents;
   close_out oc;
   path
+
+(* Environment variable helpers.
+ *
+ * OCaml 5.4's [Unix] module (as built in this nixpkgs) does NOT expose
+ * [Unix.unsetenv]: [Unix.putenv "HOME" ""] leaves [Sys.getenv_opt "HOME"]
+ * returning [Some ""], which is not the "unset" path we need to exercise
+ * in tests. Fall back to libc's C [unsetenv] via ctypes-foreign. *)
+
+let c_unsetenv =
+  Foreign.foreign "unsetenv" Ctypes.(string @-> returning int)
+
+let unsetenv name = ignore (c_unsetenv name)
+
+(* Save, mutate, restore an environment variable around [f]. If the var
+ * was unset before the call, it is re-unset afterwards. *)
+let with_env ~name ~value f =
+  let saved = Sys.getenv_opt name in
+  (match value with
+   | Some v -> Unix.putenv name v
+   | None -> unsetenv name);
+  Fun.protect
+    ~finally:(fun () ->
+      match saved with
+      | Some v -> Unix.putenv name v
+      | None -> unsetenv name)
+    f
+
+(* Run [f] in a fresh tmpdir (chdir into it, cleanup + restore cwd on
+ * exit). Uses a small recursive rmdir to clean up without spawning a
+ * shell. *)
+let rec rm_rf path =
+  match (Unix.lstat path).st_kind with
+  | Unix.S_DIR ->
+      let dh = Unix.opendir path in
+      Fun.protect
+        ~finally:(fun () -> Unix.closedir dh)
+        (fun () ->
+          try
+            while true do
+              match Unix.readdir dh with
+              | "." | ".." -> ()
+              | entry -> rm_rf (Filename.concat path entry)
+            done
+          with End_of_file -> ());
+      Unix.rmdir path
+  | _ -> Unix.unlink path
+  | exception Unix.Unix_error (Unix.ENOENT, _, _) -> ()
+
+let with_tmpdir f =
+  let prev = Sys.getcwd () in
+  let dir = Filename.temp_file "pctl-test-" "" in
+  Sys.remove dir;
+  Unix.mkdir dir 0o700;
+  Fun.protect
+    ~finally:(fun () ->
+      (try Sys.chdir prev with _ -> ());
+      (try rm_rf dir with _ -> ()))
+    (fun () ->
+      Sys.chdir dir;
+      (* macOS has /private/tmp → /tmp symlink shenanigans; resolve to
+       * whatever getcwd reports so tests can compare strings cleanly. *)
+      f (Sys.getcwd ()))
