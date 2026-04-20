@@ -10,7 +10,7 @@
 
 type t = { root : string }
 
-type entry = {
+type entry = Unit_store_intf.entry = {
   main : string;
   dropin : string option;
 }
@@ -81,9 +81,20 @@ let remove t ~unit_ : unit =
   rm_rf (dropin_dir t ~unit_filename:uf_s);
   try Sys.remove (unit_path t ~unit_filename:uf_s) with Sys_error _ -> ()
 
+(* Only entries ending in [.slice] or [.service] are pctl-managed main
+   unit files. In particular, the companion [<unit>.d/] drop-in
+   directory must be excluded — it lives next to the main file and
+   readdir surfaces it too. *)
+let has_suffix s suf =
+  let ns = String.length s and nf = String.length suf in
+  ns >= nf && String.sub s (ns - nf) nf = suf
+
+let is_main_unit s = has_suffix s ".slice" || has_suffix s ".service"
+
 let list t : Schema.Unit_filename.t list =
   if not (Sys.file_exists t.root) then []
   else
     Sys.readdir t.root |> Array.to_list
+    |> List.filter is_main_unit
     |> List.filter_map Schema.Unit_filename.of_string_opt
     |> List.sort Schema.Unit_filename.compare

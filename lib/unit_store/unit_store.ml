@@ -6,9 +6,18 @@
 
 module type S = Unit_store_intf.UNIT_STORE
 
-module Fs = Fs
+(* Re-export the shared entry record so callers (Lifecycle, tests) can
+   write [Unit_store.entry] without poking into the _intf submodule. *)
+type entry = Unit_store_intf.entry = {
+  main : string;
+  dropin : string option;
+}
 
-(* Compile-time proof that [Fs] satisfies [S]. Phase 3's
+module Fs = Fs
+module In_mem = In_mem
+
+(* Compile-time proof that each adapter satisfies [S]. Phase 3's
    [Lifecycle.Make (M) (US : S)] depends on this; surface any signature
    drift here, not at the functor application site. *)
 module _ : S = Fs
+module _ : S = In_mem
