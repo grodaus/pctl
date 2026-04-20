@@ -16,18 +16,10 @@ type t = private {
   spec_file : Fpath.t;
 }
 
-module type NIX = sig
-  val out_path :
-    attr:string ->
-    path:string ->
-    env:Eio_unix.Stdenv.base ->
-    sw:Eio.Switch.t ->
-    string
-
-  val read_spec_blob : string -> string option
-end
-(** Duplicated from [Pipeline.NIX] to avoid a circular dep between
-    [Project_paths] and [Pipeline]. A later task unifies them. *)
+module type NIX = Nix_build.S
+(** Alias for [Nix_build.S] — both [Project_paths] and [Pipeline] live
+    in the [cli] library and already depend on [Nix_build], so the
+    aliases keep the three signatures in lock-step with one source. *)
 
 val resolve :
   env:Eio_unix.Stdenv.base ->
@@ -42,8 +34,8 @@ val resolve :
     - [tree] = user-supplied spec.json override (`pctl up --tree <file>`):
       when present and non-empty, parsed via [Fpath.v] and asserted absolute.
     - Otherwise, build `<nix_attr>` (defaulting to `.#pctl`) via
-      [Nix.out_path] with [path] set to [Project_path.to_string project];
-      the outpath itself is the spec.json file (writeText semantics).
+      [Nix.out_path] with [cwd] set to [project]; the outpath itself is
+      the spec.json file (writeText semantics).
 
     Raises [Schema.Pctl_error (Identity_invalid …)] if the resolved
     [spec_file] does not parse as an absolute path. *)

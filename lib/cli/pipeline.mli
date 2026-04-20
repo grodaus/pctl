@@ -20,16 +20,7 @@
  * (Real | test stub), Clock (Real | Frozen). State.Db, Install, Spec
  * remain in-process — they have no second implementation awaiting. *)
 
-module type NIX = sig
-  val out_path :
-    attr:string ->
-    path:string ->
-    env:Eio_unix.Stdenv.base ->
-    sw:Eio.Switch.t ->
-    string
-
-  val read_spec_blob : string -> string option
-end
+module type NIX = Nix_build.S
 
 module type CLOCK = Clock.S
 

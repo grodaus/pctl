@@ -11,14 +11,14 @@ let single_spec_json =
   {|{"services":{"pg":{"depends_on":[],"kind":"simple","probe":null,"service_config":{"ExecStart":"/bin/true","NoNewPrivileges":"yes","ProtectControlGroups":"yes","ProtectHome":"read-only","ProtectKernelModules":"yes","ProtectKernelTunables":"yes","ProtectSystem":"strict","RestrictNamespaces":"yes","RestrictSUIDSGID":"yes","Type":"simple"},"workspace":{"cwd":false,"writable":false}}},"slice":{"slice_config":{}},"version":2}|}
 
 module Stub_nix : Cli.Pipeline.NIX = struct
-  let out_path ~attr:_ ~path:_ ~env:_ ~sw:_ =
+  let out_path ~attr:_ ~cwd:_ ~env:_ ~sw:_ =
     let tmp = Filename.temp_file "pctl-test-spec" ".json" in
     let oc = open_out tmp in
     output_string oc single_spec_json;
     close_out oc;
     tmp
 
-  let read_spec_blob _ = Some single_spec_json
+  let read_spec_blob _ = single_spec_json
 end
 
 let frozen_clock_m =

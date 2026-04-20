@@ -5,7 +5,7 @@
  *   - OCaml captures stderr into a buffer so we can include it in
  *     Nix_build_failed on non-zero exit.
  *
- * When `path` is provided, the process is spawned with cwd = path so
+ * When `cwd` is provided, the process is spawned with that cwd so
  * `nix build .#foo` resolves the flake at the project dir, matching
  * Nushell semantics (the Nushell script is invoked via `cd $cwd`).
  *
@@ -21,13 +21,13 @@ let last_line (s : string) : string =
   | Some i -> String.sub s (i + 1) (String.length s - i - 1)
   | None -> s
 
-let print_out_paths ~attr ?path ~env ~sw () : string =
+let print_out_paths ~attr ?(cwd : Fpath.t option) ~env ~sw () : string =
   let cwd_arg : Eio.Fs.dir_ty Eio.Path.t option =
-    match path with
-    | Some p when p <> "" ->
+    match cwd with
+    | Some p ->
         let fs = (Eio.Stdenv.fs env :> Eio.Fs.dir_ty Eio.Path.t) in
-        Some Eio.Path.(fs / p)
-    | _ -> None
+        Some Eio.Path.(fs / Fpath.to_string p)
+    | None -> None
   in
   let process_mgr = Eio.Stdenv.process_mgr env in
   let stdout_buf = Buffer.create 256 in
@@ -66,32 +66,39 @@ let print_out_paths ~attr ?path ~env ~sw () : string =
               }))
 
 (* Nix port — Pipeline.Make depends on this signature.
- * [Real] uses [print_out_paths] + a best-effort slurp of the spec.json
- * bytes (for persistence into the projects registry). Tests substitute
- * a stub that returns canned bytes without shelling out to nix. *)
+ * [Real] uses [print_out_paths] + a slurp of the spec.json bytes (for
+ * persistence into the projects registry). A read failure raises
+ * [Pctl_error (Spec_parse ...)] — we must not silently drop the blob.
+ * Tests substitute a stub that returns canned bytes without shelling
+ * out to nix. *)
 
 module type S = sig
   val out_path :
     attr:string ->
-    path:string ->
+    cwd:Schema.project_path ->
     env:Eio_unix.Stdenv.base ->
     sw:Eio.Switch.t ->
     string
 
-  val read_spec_blob : string -> string option
+  val read_spec_blob : Fpath.t -> string
 end
 
 module Real : S = struct
-  let out_path ~attr ~path ~env ~sw =
-    print_out_paths ~attr ~path ~env ~sw ()
+  let out_path ~attr ~cwd ~env ~sw =
+    (* Route through [to_string] to reuse the canonical trailing-slash
+     * strip, then back to [Fpath.t] for [print_out_paths]. *)
+    let cwd_fpath = Fpath.v (Schema.Project_path.to_string cwd) in
+    print_out_paths ~attr ~cwd:cwd_fpath ~env ~sw ()
 
-  let read_spec_blob path =
+  let read_spec_blob p =
+    let path = Fpath.to_string p in
     try
       let ic = open_in path in
       Fun.protect
         ~finally:(fun () -> close_in ic)
         (fun () ->
           let n = in_channel_length ic in
-          Some (really_input_string ic n))
-    with Sys_error _ -> None
+          really_input_string ic n)
+    with Sys_error msg ->
+      raise (Schema.Pctl_error (Schema.Spec_parse { path; msg }))
 end

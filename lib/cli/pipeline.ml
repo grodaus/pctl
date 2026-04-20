@@ -14,16 +14,7 @@
  *   - Prod: Make applied to production adapters (Dbus, Nix_build.Real,
  *     Clock.Real). Consumed directly by bin/pctl.ml. *)
 
-module type NIX = sig
-  val out_path :
-    attr:string ->
-    path:string ->
-    env:Eio_unix.Stdenv.base ->
-    sw:Eio.Switch.t ->
-    string
-
-  val read_spec_blob : string -> string option
-end
+module type NIX = Nix_build.S
 
 module type CLOCK = Clock.S
 
@@ -203,8 +194,7 @@ module Make (P : PORTS) = struct
         ?tree ?nix_attr:nix project
     in
     let spec = Spec.load paths.spec_file in
-    let spec_file_s = Fpath.to_string paths.spec_file in
-    let spec_blob = P.Nix.read_spec_blob spec_file_s in
+    let spec_blob = P.Nix.read_spec_blob paths.spec_file in
     let id = Identity.derive ~path:project in
     with_connection ~env ~sw @@ fun conn ->
     opportunistic_sweep ~env ~conn;
@@ -237,7 +227,7 @@ module Make (P : PORTS) = struct
         started_at = Some started_at;
         store_tree = Some (Fpath.to_string paths.spec_file);
         session_id = (if boot_id = "" then None else Some boot_id);
-        spec_json = spec_blob;
+        spec_json = Some spec_blob;
       };
     State.Projects.replace_manifest conn ~project_id:id_s ~rows:new_manifest;
     k

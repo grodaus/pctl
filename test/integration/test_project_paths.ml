@@ -17,13 +17,13 @@ let fresh () = { calls = 0; last_attr = None; last_path = None }
 
 let make_stub (r : recorder) ~return : (module Cli.Project_paths.NIX) =
   (module struct
-    let out_path ~attr ~path ~env:_ ~sw:_ =
+    let out_path ~attr ~cwd ~env:_ ~sw:_ =
       r.calls <- r.calls + 1;
       r.last_attr <- Some attr;
-      r.last_path <- Some path;
+      r.last_path <- Some (Schema.Project_path.to_string cwd);
       return
 
-    let read_spec_blob _ = None
+    let read_spec_blob _ = ""
   end)
 
 let project_of_cwd () =

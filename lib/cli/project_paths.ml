@@ -5,16 +5,7 @@ type t = {
   spec_file : Fpath.t;
 }
 
-module type NIX = sig
-  val out_path :
-    attr:string ->
-    path:string ->
-    env:Eio_unix.Stdenv.base ->
-    sw:Eio.Switch.t ->
-    string
-
-  val read_spec_blob : string -> string option
-end
+module type NIX = Nix_build.S
 
 (* `nix build --print-out-paths` emits a trailing newline on stdout. *)
 let rtrim_ws s =
@@ -46,9 +37,7 @@ let resolve ~env ~sw ~nix:(module N : NIX) ?tree ?nix_attr project =
         let attr =
           match nix_attr with Some n when n <> "" -> n | _ -> ".#pctl"
         in
-        N.out_path ~attr
-          ~path:(Schema.Project_path.to_string project)
-          ~env ~sw
+        N.out_path ~attr ~cwd:project ~env ~sw
   in
   match parse_spec_file raw with
   | Ok spec_file -> { project; spec_file }
