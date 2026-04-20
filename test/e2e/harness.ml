@@ -224,16 +224,38 @@ let teardown (s : scratch) =
    | None -> Unix.putenv "XDG_STATE_HOME" "");
   rm_rf s.tmp
 
-(* Wait for a unit to reach "active" via systemctl --user is-active. *)
+(* Run a shell command, return (stdout_bytes, exit_code). Caller
+ * controls stderr (append "2>&1" to merge into the buffer,
+ * "2>/dev/null" to drop). *)
+let run_capture cmd =
+  let ic = Unix.open_process_in cmd in
+  let buf = Buffer.create 256 in
+  (try
+     while true do
+       Buffer.add_string buf (input_line ic);
+       Buffer.add_char buf '\n'
+     done
+   with End_of_file -> ());
+  let status = Unix.close_process_in ic in
+  let rc =
+    match status with
+    | Unix.WEXITED n -> n
+    | Unix.WSIGNALED _ | Unix.WSTOPPED _ -> 128
+  in
+  (Buffer.contents buf, rc)
+
+let systemctl_is_active unit_name =
+  let out, _ =
+    run_capture
+      (Printf.sprintf "systemctl --user is-active %s 2>/dev/null"
+         (Filename.quote unit_name))
+  in
+  String.trim out = "active"
+
 let wait_active ?(timeout_s = 5.0) unit_name =
   let deadline = Unix.gettimeofday () +. timeout_s in
   let rec loop () =
-    let ic = Unix.open_process_in (Printf.sprintf "systemctl --user is-active %s 2>/dev/null" (Filename.quote unit_name)) in
-    let s =
-      try String.trim (input_line ic) with End_of_file -> ""
-    in
-    let _ = Unix.close_process_in ic in
-    if s = "active" then true
+    if systemctl_is_active unit_name then true
     else if Unix.gettimeofday () > deadline then false
     else begin
       let _ = Unix.select [] [] [] 0.1 in
@@ -242,24 +264,18 @@ let wait_active ?(timeout_s = 5.0) unit_name =
   in
   loop ()
 
-let is_active unit_name =
-  let ic = Unix.open_process_in (Printf.sprintf "systemctl --user is-active %s 2>/dev/null" (Filename.quote unit_name)) in
-  let s = try String.trim (input_line ic) with End_of_file -> "" in
-  let _ = Unix.close_process_in ic in
-  s = "active"
+let is_active = systemctl_is_active
 
-(* Get unit's ActiveEnterTimestampMonotonic (as a string). Empty on
- * error/no-such-unit. *)
+(* ActiveEnterTimestampMonotonic as a string; empty on error/no-such-unit. *)
 let active_enter_ts unit_name =
-  let ic =
-    Unix.open_process_in
+  let out, _ =
+    run_capture
       (Printf.sprintf
-         "systemctl --user show %s -p ActiveEnterTimestampMonotonic --value 2>/dev/null"
+         "systemctl --user show %s -p ActiveEnterTimestampMonotonic --value \
+          2>/dev/null"
          (Filename.quote unit_name))
   in
-  let s = try String.trim (input_line ic) with End_of_file -> "" in
-  let _ = Unix.close_process_in ic in
-  s
+  String.trim out
 
 (* Redirect a stdlib fd (stdout or stderr) into a temp file while [f]
  * runs; return [f]'s result plus the captured bytes. Used by all the
@@ -307,33 +323,21 @@ let with_captured_stderr (f : unit -> 'a) : 'a * string =
   with_captured_fd ~fd_kind:Unix.stderr
     ~flush_channel:(fun () -> flush Stdlib.stderr) f
 
-(* pctl wrappers.
- *
- * Each returns (exit_code, pctl_stderr). pctl.run prints Pctl_error
- * messages via [prerr_endline] — capturing stderr keeps that context
- * with the test so a failing [check_rc_zero] can print exactly what
- * pctl said, not just the numeric bucket. See [check_rc_zero] below. *)
+(* pctl wrappers. Each returns (exit_code, pctl_stderr) — pctl.run
+ * prints Pctl_error via prerr_endline, so capturing stderr lets
+ * check_rc_zero surface the actual message, not just the rc bucket. *)
 
-let up ~scratch : int * string =
+let run_up ?(wait = false) ?timeout ?(no_block = false) ~scratch ()
+    : int * string =
   with_captured_stderr (fun () ->
       Eio_main.run @@ fun env ->
       Eio.Switch.run @@ fun sw ->
       Cli.Pipeline.Prod.up ~sw ~env ~tree:scratch.spec_path
-        ~path:scratch.project_dir ())
+        ~path:scratch.project_dir ~wait ~no_block ?timeout ())
 
-let up_wait ?(timeout = 30) ~scratch () : int * string =
-  with_captured_stderr (fun () ->
-      Eio_main.run @@ fun env ->
-      Eio.Switch.run @@ fun sw ->
-      Cli.Pipeline.Prod.up ~sw ~env ~tree:scratch.spec_path
-        ~path:scratch.project_dir ~wait:true ~timeout ())
-
-let up_no_block ~scratch : int * string =
-  with_captured_stderr (fun () ->
-      Eio_main.run @@ fun env ->
-      Eio.Switch.run @@ fun sw ->
-      Cli.Pipeline.Prod.up ~sw ~env ~tree:scratch.spec_path
-        ~path:scratch.project_dir ~no_block:true ())
+let up ~scratch : int * string = run_up ~scratch ()
+let up_wait ?(timeout = 30) ~scratch () = run_up ~wait:true ~timeout ~scratch ()
+let up_no_block ~scratch = run_up ~no_block:true ~scratch ()
 
 let results ?(timeout = 30) ?(json = false) ~scratch () : int * string =
   with_captured_stdout (fun () ->
@@ -422,9 +426,6 @@ let skip_or_run ~name body =
       exit 0
   | None -> body ()
 
-(* check_rc_zero now takes a (rc, captured_stderr) tuple so failures
- * can reproduce pctl's own error message in the alcotest output.
- * Tests that only have a bare int pass [(rc, "")]. *)
 let check_rc_zero ~label (rc, captured) =
   if rc <> 0 then
     Alcotest.failf "%s exit=%d\n---- pctl stderr ----\n%s" label rc
@@ -442,50 +443,29 @@ let assert_false ~label cond =
 let assert_eq_string ~label expected got =
   Alcotest.(check string) label expected got
 
-(* Run a shell command, return (stdout_concat, exit_code). Stderr merged. *)
-let run_capture cmd =
-  let ic = Unix.open_process_in (cmd ^ " 2>&1") in
-  let buf = Buffer.create 256 in
-  (try
-     while true do
-       Buffer.add_string buf (input_line ic);
-       Buffer.add_char buf '\n'
-     done
-   with End_of_file -> ());
-  let status = Unix.close_process_in ic in
-  let rc =
-    match status with
-    | Unix.WEXITED n -> n
-    | Unix.WSIGNALED _ | Unix.WSTOPPED _ -> 128
-  in
-  (Buffer.contents buf, rc)
-
 (* Diagnostic snapshot: the five fields that actually distinguish "not
  * active" causes (load-failed vs. crashed vs. still-activating vs.
- * sandbox-rejected), plus the last 30 journal lines. Used by
- * [assert_unit_active] and other asserts that need more than a bool. *)
+ * sandbox-rejected), plus the last 30 journal lines. *)
 let unit_diagnostic unit_name : string =
   let show, _ =
     run_capture
       (Printf.sprintf
          "systemctl --user show %s -p LoadState -p ActiveState -p SubState -p \
           Result -p ExecMainStatus -p ExecMainCode -p StatusErrno -p \
-          InvocationID --no-pager"
+          InvocationID --no-pager 2>&1"
          (Filename.quote unit_name))
   in
   let jr, _ =
     run_capture
       (Printf.sprintf
-         "journalctl --user --no-pager -n 30 --output=short-iso -u %s"
+         "journalctl --user --no-pager -n 30 --output=short-iso -u %s 2>&1"
          (Filename.quote unit_name))
   in
   Printf.sprintf "---- systemctl show %s ----\n%s---- journalctl -u %s (last 30) ----\n%s"
     unit_name show unit_name jr
 
 let assert_unit_active unit_name =
-  if wait_active unit_name then
-    Printf.printf "ASSERT %s active\n%!" unit_name
-  else
+  if not (wait_active unit_name) then
     Alcotest.failf
       "%s did not reach active within 5s\n%s" unit_name
       (unit_diagnostic unit_name)

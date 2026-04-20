@@ -46,37 +46,21 @@ let () =
   Harness.assert_true
     ~label:(Printf.sprintf "%s active before subscribe" unit_name)
     (Harness.is_active unit_name);
-  (* We can't assert the exact Deactivating -> Inactive -> Activating ->
-   * Active sequence: the dbus handler re-reads unit_state synchronously
-   * on each PropertiesChanged, and fast transitions flip past the
-   * intermediate states before our read happens. What Subscribe() is
-   * responsible for is *signal volume*: a working subscription fires
-   * many callbacks over a restart (one per property change on the
-   * Unit/Service objects). On a session where Manager.Subscribe was
-   * never called (the privileged runner, lingered-only sessions),
-   * systemd drops most per-unit PropertiesChanged signals entirely, so
-   * we only see a handful — well below the count a real restart emits.
-   *
-   * We assert two things:
-   *   1. At least 8 callbacks fired. Measured baseline on a working
-   *      session is 15-20; the broken path on the privileged runner
-   *      was 2. An 8-callback floor has headroom either side.
-   *   2. The final observed state is Active — the restart actually
-   *      completed, so the unit itself is fine; only signalling was
-   *      dropped. *)
+  (* Assert signal *volume*, not a specific transition sequence: the
+   * handler re-reads state synchronously on each PropertiesChanged so
+   * fast transitions get coalesced. 8-callback floor: measured baseline
+   * on a working session is 15-20; broken path on the privileged
+   * runner was 2. *)
   let min_fired = 8 in
   let observed = ref [] in
   Eio_main.run @@ fun env ->
   Eio.Switch.run @@ fun sw ->
   let handle = Systemctl.Dbus.connect ~sw env in
   let terminal_p, terminal_u = Eio.Promise.create () in
-  let resolved = ref false in
   let cb (s : Schema.state) =
     observed := s :: !observed;
-    if (not !resolved) && s = Schema.Active then begin
-      resolved := true;
+    if s = Schema.Active && not (Eio.Promise.is_resolved terminal_p) then
       Eio.Promise.resolve terminal_u ()
-    end
   in
   Systemctl.Dbus.subscribe_unit_changes handle ~unit:unit_name cb;
   Systemctl.Dbus.restart_unit handle ~unit:unit_name;

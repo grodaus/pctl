@@ -3,19 +3,15 @@
 
 (* Absolute paths: the systemd --user session on the privileged CI
  * runner starts with a minimal PATH that does not include
- * /run/current-system/sw/bin, so bare `sleep` / `touch` in ExecStart
- * resolve to nothing and the ExecStart silently falls through. On the
- * dev box PATH leaks through the user's login shell so this worked
- * by accident. *)
+ * /run/current-system/sw/bin, so bare names in ExecStart resolve to
+ * nothing and silently fall through. *)
 let bash = "/run/current-system/sw/bin/bash"
-let sleep = "/run/current-system/sw/bin/sleep"
 let touch = "/run/current-system/sw/bin/touch"
 
 let () =
   Harness.skip_or_run ~name:"test_wait_probe" @@ fun () ->
-  (* Flag path must be visible to the systemd --user daemon that runs
-   * the service: /run/user/<uid> (not $TMPDIR, which is dune's private
-   * build sandbox on CI and unreachable from the user daemon). Same
+  (* Flag path must live under /run/user/<uid> so the systemd --user
+   * daemon can see it; $TMPDIR is dune's private sandbox on CI. Same
    * rationale as Harness.fresh_tmpdir. *)
   let tmp_base = Printf.sprintf "/run/user/%d" (Unix.getuid ()) in
   let flag =
@@ -41,7 +37,7 @@ let () =
             Printf.sprintf
               "%s -c '%s 0.5; %s %s; exec %s -c \"while true; do %s 3600; \
                done\"'"
-              bash sleep touch flag bash sleep );
+              bash Harness.sleep_bin touch flag bash Harness.sleep_bin );
         ];
       workspace = None;
     }
