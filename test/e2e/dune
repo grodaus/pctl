@@ -26,12 +26,12 @@
         test_workspace test_wait_active test_wait_probe test_wait_timeout
         test_results test_host test_up_no_block test_up_no_wait
         test_logs test_status test_list test_gc
-        test_gc_explicit test_pctl_no_gc)
+        test_gc_explicit test_pctl_no_gc test_dbus_subscribe)
  (modules test_up test_up_idempotent test_reload test_down test_worktree
           test_workspace test_wait_active test_wait_probe test_wait_timeout
           test_results test_host test_up_no_block test_up_no_wait
           test_logs test_status test_list test_gc
-          test_gc_explicit test_pctl_no_gc)
+          test_gc_explicit test_pctl_no_gc test_dbus_subscribe)
  (libraries e2e_harness schema identity unit_store cli state systemctl yojson
             str eio eio_main eio.unix alcotest unix))
 
@@ -44,7 +44,8 @@
 
 (rule
  (alias e2e)
- (deps test_dbus_smoke.exe test_up.exe test_up_idempotent.exe
+ (deps test_dbus_smoke.exe test_dbus_subscribe.exe test_up.exe
+       test_up_idempotent.exe
        test_reload.exe test_down.exe test_worktree.exe test_workspace.exe
        test_wait_active.exe test_wait_probe.exe test_wait_timeout.exe
        test_results.exe test_host.exe test_up_no_block.exe
@@ -54,6 +55,7 @@
  (action
   (progn
    (run ./test_dbus_smoke.exe)
+   (run ./test_dbus_subscribe.exe)
    (run ./test_up.exe)
    (run ./test_up_idempotent.exe)
    (run ./test_reload.exe)
