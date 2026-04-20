@@ -44,9 +44,10 @@ val run : (unit -> unit) -> int
     rendered message, returns the matching exit bucket). Any other
     exception is logged generically and returns 1. *)
 
-val resolve_path : string option -> string
+val resolve_path : string option -> Schema.project_path
 (** Expand [None]/empty to [Sys.getcwd ()]; expand [Some p] via
-    [Identity.path_expand]. *)
+    [Schema.Project_path.of_raw] (tilde + env var substitution,
+    normalization). *)
 
 val with_connection :
   env:Eio_unix.Stdenv.base ->

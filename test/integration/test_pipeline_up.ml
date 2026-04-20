@@ -90,7 +90,8 @@ let test_up_happy () =
    * read back. *)
   let conn = inspect_conn ~sw ~env in
   let id_s =
-    Schema.Project_id.to_string (Identity.derive ~path:project)
+    Schema.Project_id.to_string
+      (Identity.derive ~path:(Schema.Project_path.of_raw project))
   in
   let row =
     match State.Projects.get_by_id conn ~id:id_s with
@@ -139,7 +140,8 @@ let test_up_then_reload_idempotent () =
   (* Host stays the same — re-up must not reallocate. *)
   let conn = inspect_conn ~sw ~env in
   let id_s =
-    Schema.Project_id.to_string (Identity.derive ~path:project)
+    Schema.Project_id.to_string
+      (Identity.derive ~path:(Schema.Project_path.of_raw project))
   in
   let row =
     match State.Projects.get_by_id conn ~id:id_s with

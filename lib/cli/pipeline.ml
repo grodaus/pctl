@@ -35,10 +35,10 @@ end
 
 (* ---- Port-agnostic helpers -------------------------------------- *)
 
-let resolve_path (path : string option) : string =
+let resolve_path (path : string option) : Schema.project_path =
   match path with
-  | Some p when p <> "" -> Identity.path_expand p
-  | _ -> Sys.getcwd () |> Identity.path_expand
+  | Some p when p <> "" -> Schema.Project_path.of_raw p
+  | _ -> Schema.Project_path.of_raw (Sys.getcwd ())
 
 let caqti_stdenv (env : Eio_unix.Stdenv.base) : Caqti_eio.stdenv =
   object
@@ -191,26 +191,21 @@ module Make (P : PORTS) = struct
     host : Schema.host;
     spec : Schema.spec;
     conn : State.Db.t;
-    path : string;
     new_rows : Schema.manifest;
     diff : Schema.plan_row list;
   }
 
-  let resolve_spec_file ~env ~sw ?tree ?nix ~project_path () : string =
-    match tree with
-    | Some t when t <> "" -> Identity.path_expand t
-    | _ ->
-        let attr =
-          match nix with Some n when n <> "" -> n | _ -> ".#pctl"
-        in
-        P.Nix.out_path ~attr ~path:project_path ~env ~sw
-
   let with_project ~sw ~env ?tree ?nix ?path (k : ctx -> 'a) : 'a =
-    let project_path = resolve_path path in
-    let spec_file = resolve_spec_file ~env ~sw ?tree ?nix ~project_path () in
-    let spec = Spec.load ~path:spec_file in
-    let spec_blob = P.Nix.read_spec_blob spec_file in
-    let id = Identity.derive ~path:project_path in
+    let project = resolve_path path in
+    let paths =
+      Project_paths.resolve ~env ~sw
+        ~nix:(module P.Nix : Project_paths.NIX)
+        ?tree ?nix_attr:nix project
+    in
+    let spec = Spec.load paths.spec_file in
+    let spec_file_s = Fpath.to_string paths.spec_file in
+    let spec_blob = P.Nix.read_spec_blob spec_file_s in
+    let id = Identity.derive ~path:project in
     with_connection ~env ~sw @@ fun conn ->
     opportunistic_sweep ~env ~conn;
     let host =
@@ -221,8 +216,9 @@ module Make (P : PORTS) = struct
     in
     let id_s = Schema.Project_id.to_string id in
     let old_manifest = State.Projects.load_manifest conn ~project_id:id_s in
+    let project_path_s = Schema.Project_path.to_string project in
     let new_manifest =
-      Install.Install.write_units ~spec ~id ~project_path ~host
+      Install.Install.write_units ~spec ~id ~project_path:project_path_s ~host
     in
     let diff =
       State.Projects.diff_manifest ~before:old_manifest ~after:new_manifest
@@ -236,10 +232,10 @@ module Make (P : PORTS) = struct
     State.Projects.upsert conn
       {
         id = id_s;
-        path = project_path;
+        path = project_path_s;
         host = Some (Schema.Host.to_string host);
         started_at = Some started_at;
-        store_tree = Some spec_file;
+        store_tree = Some (Fpath.to_string paths.spec_file);
         session_id = (if boot_id = "" then None else Some boot_id);
         spec_json = spec_blob;
       };
@@ -250,7 +246,6 @@ module Make (P : PORTS) = struct
         host;
         spec;
         conn;
-        path = project_path;
         new_rows = new_manifest;
         diff;
       }
@@ -259,8 +254,8 @@ module Make (P : PORTS) = struct
 
   let with_registered ~sw ~env ?(sweep = false) ?path
       (k : State.Db.t -> Schema.project_id -> 'a) : 'a =
-    let project_path = resolve_path path in
-    let id = Identity.derive ~path:project_path in
+    let project = resolve_path path in
+    let id = Identity.derive ~path:project in
     with_connection ~env ~sw @@ fun conn ->
     if sweep then opportunistic_sweep ~env ~conn;
     k conn id
@@ -311,7 +306,7 @@ module Make (P : PORTS) = struct
       let id_s = Schema.Project_id.to_string id in
       let existing = State.Projects.load_manifest conn ~project_id:id_s in
       if existing = [] then begin
-        let project_path = resolve_path path in
+        let project_path = Schema.Project_path.to_string (resolve_path path) in
         raise
           (Schema.Pctl_error
              (Schema.Registry_io

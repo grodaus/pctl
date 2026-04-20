@@ -18,7 +18,7 @@ let check_raises_pctl ~name ~predicate f =
            (Printexc.to_string exn))
 
 let test_spec_load_single () =
-  let spec = Spec.load ~path:(Test_helpers.spec_fixture "single") in
+  let spec = Spec.load (Fpath.v (Test_helpers.spec_fixture "single")) in
   Alcotest.(check int) "version" 2 spec.version;
   Alcotest.(check int) "service count" 1 (StringMap.cardinal spec.services);
   let pg = StringMap.find "pg" spec.services in
@@ -35,7 +35,7 @@ let test_spec_load_single () =
     "Type" (Some "simple") (List.assoc_opt "Type" sc)
 
 let test_spec_load_multi_depends_on () =
-  let spec = Spec.load ~path:(Test_helpers.spec_fixture "multi") in
+  let spec = Spec.load (Fpath.v (Test_helpers.spec_fixture "multi")) in
   Alcotest.(check int) "service count" 3 (StringMap.cardinal spec.services);
   let server = StringMap.find "server" spec.services in
   Alcotest.(check (list string))
@@ -46,7 +46,7 @@ let test_spec_load_multi_depends_on () =
   Alcotest.(check (list string)) "migrate depends_on" [] migrate.depends_on
 
 let test_spec_load_probe () =
-  let spec = Spec.load ~path:(Test_helpers.spec_fixture "probe") in
+  let spec = Spec.load (Fpath.v (Test_helpers.spec_fixture "probe")) in
   let pg = StringMap.find "pg" spec.services in
   match pg.probe with
   | None -> Alcotest.fail "expected probe to be present"
@@ -56,7 +56,7 @@ let test_spec_load_probe () =
       Alcotest.(check int) "timeout_seconds" 60 p.timeout_seconds
 
 let test_spec_load_workspace () =
-  let spec = Spec.load ~path:(Test_helpers.spec_fixture "workspace") in
+  let spec = Spec.load (Fpath.v (Test_helpers.spec_fixture "workspace")) in
   let worker = StringMap.find "worker" spec.services in
   Alcotest.(check bool) "cwd" true worker.workspace.cwd;
   Alcotest.(check bool) "writable" true worker.workspace.writable
@@ -64,7 +64,7 @@ let test_spec_load_workspace () =
 let test_spec_load_missing_file () =
   check_raises_pctl ~name:"missing file"
     ~predicate:(function Spec_not_found _ -> true | _ -> false) (fun () ->
-      Spec.load ~path:"/nonexistent/pctl-spec.json")
+      Spec.load (Fpath.v "/nonexistent/pctl-spec.json"))
 
 let test_spec_load_parse_error () =
   let path =
@@ -75,7 +75,7 @@ let test_spec_load_parse_error () =
     (fun () ->
       check_raises_pctl ~name:"bad JSON"
         ~predicate:(function Spec_parse _ -> true | _ -> false) (fun () ->
-          Spec.load ~path))
+          Spec.load (Fpath.v path)))
 
 let test_spec_load_unknown_version () =
   let path =
@@ -88,7 +88,7 @@ let test_spec_load_unknown_version () =
     (fun () ->
       check_raises_pctl ~name:"unknown version"
         ~predicate:(function Spec_unknown_version 99 -> true | _ -> false)
-        (fun () -> Spec.load ~path))
+        (fun () -> Spec.load (Fpath.v path)))
 
 let test_spec_load_v1_rejected () =
   (* v1 was the placeholder-carrying schema; v2 dropped the placeholder
@@ -103,7 +103,7 @@ let test_spec_load_v1_rejected () =
     (fun () ->
       check_raises_pctl ~name:"v1 rejected"
         ~predicate:(function Spec_unknown_version 1 -> true | _ -> false)
-        (fun () -> Spec.load ~path))
+        (fun () -> Spec.load (Fpath.v path)))
 
 let test_spec_load_missing_version () =
   let path =
@@ -115,7 +115,7 @@ let test_spec_load_missing_version () =
     (fun () ->
       check_raises_pctl ~name:"missing version"
         ~predicate:(function Spec_parse _ -> true | _ -> false) (fun () ->
-          Spec.load ~path))
+          Spec.load (Fpath.v path)))
 
 let test_spec_load_missing_slice () =
   let path =
@@ -127,7 +127,7 @@ let test_spec_load_missing_slice () =
     (fun () ->
       check_raises_pctl ~name:"missing slice"
         ~predicate:(function Spec_parse _ -> true | _ -> false) (fun () ->
-          Spec.load ~path))
+          Spec.load (Fpath.v path)))
 
 let test_spec_load_missing_services () =
   let path =
@@ -139,7 +139,7 @@ let test_spec_load_missing_services () =
     (fun () ->
       check_raises_pctl ~name:"missing services"
         ~predicate:(function Spec_parse _ -> true | _ -> false) (fun () ->
-          Spec.load ~path))
+          Spec.load (Fpath.v path)))
 
 let test_spec_load_missing_kind () =
   let path =
@@ -156,7 +156,7 @@ let test_spec_load_missing_kind () =
           | Spec_parse { msg; _ } ->
               Test_helpers.contains_substring msg "kind"
           | _ -> false)
-        (fun () -> Spec.load ~path))
+        (fun () -> Spec.load (Fpath.v path)))
 
 let test_spec_load_missing_service_config () =
   let path =
@@ -173,7 +173,7 @@ let test_spec_load_missing_service_config () =
           | Spec_parse { msg; _ } ->
               Test_helpers.contains_substring msg "service_config"
           | _ -> false)
-        (fun () -> Spec.load ~path))
+        (fun () -> Spec.load (Fpath.v path)))
 
 let test_spec_load_bad_service_config_value () =
   let path =
@@ -191,7 +191,7 @@ let test_spec_load_bad_service_config_value () =
           | Spec_parse { msg; _ } ->
               Test_helpers.contains_substring msg "ExecStart"
           | _ -> false)
-        (fun () -> Spec.load ~path))
+        (fun () -> Spec.load (Fpath.v path)))
 
 let test_spec_load_bad_kind () =
   let path =
@@ -209,7 +209,7 @@ let test_spec_load_bad_kind () =
           | Spec_parse { msg; _ } ->
               Test_helpers.contains_substring msg "zombie"
           | _ -> false)
-        (fun () -> Spec.load ~path))
+        (fun () -> Spec.load (Fpath.v path)))
 
 let () =
   let open Alcotest in

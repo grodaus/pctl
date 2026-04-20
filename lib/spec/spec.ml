@@ -160,7 +160,8 @@ let parse ~path (j : Yojson.Safe.t) : spec =
       if version <> 2 then raise (Pctl_error (Spec_unknown_version version));
       { version; slice = { slice_config = slice.slice_config }; services }
 
-let load ~path : spec =
+let load (p : Fpath.t) : spec =
+  let path = Fpath.to_string p in
   if not (Sys.file_exists path) then
     raise (Pctl_error (Spec_not_found { path }));
   let json =

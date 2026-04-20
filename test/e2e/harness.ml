@@ -145,7 +145,7 @@ let setup ~services : scratch = setup_with ~build_services:(fun _ -> services)
 
 (* Project id for the scratch dir. *)
 let project_id (s : scratch) : Schema.project_id =
-  Identity.derive ~path:s.project_dir
+  Identity.derive ~path:(Schema.Project_path.of_raw s.project_dir)
 
 (* Unit filenames are concrete (pctl-<id>-<svc>.service); tests pass
  * them in directly. No placeholders, no id-substitution needed. *)

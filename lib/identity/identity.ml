@@ -2,32 +2,13 @@
  * `allocate-host`. The Nushell implementation is the behavioural oracle;
  * the OCaml port must produce byte-identical ids and hosts for every
  * path so the binaries swap cleanly. See test/unit/test_identity.ml for
- * fixture-parity anchors. *)
+ * fixture-parity anchors.
+ *
+ * Path expansion (tilde/env substitution, normalization) lives in
+ * [Schema.Project_path.of_raw]; [derive] takes an already-expanded
+ * [project_path]. *)
 
 open Schema
-
-(* Path expansion — faithful port of Nushell's `path expand`. Normalizes
- * ./, ../ and repeated slashes; does NOT resolve symlinks and does NOT
- * require the path to exist (so stdlib Filename.realpath / Unix.realpath
- * are wrong here — they'd error on non-existing inputs). Relative input
- * is resolved against [Sys.getcwd]. *)
-
-let normalize_absolute path =
-  let segs = String.split_on_char '/' path in
-  let rec fold acc = function
-    | [] -> List.rev acc
-    | ("" | ".") :: tl -> fold acc tl
-    | ".." :: tl -> fold (match acc with _ :: rest -> rest | [] -> []) tl
-    | seg :: tl -> fold (seg :: acc) tl
-  in
-  "/" ^ String.concat "/" (fold [] segs)
-
-let path_expand raw =
-  let abs =
-    if String.length raw > 0 && raw.[0] = '/' then raw
-    else Filename.concat (Sys.getcwd ()) raw
-  in
-  normalize_absolute abs
 
 (* Lowercase raw basename, fold every run of non-[a-z0-9_] characters
  * into a single underscore, trim leading/trailing underscores. Empty
@@ -52,8 +33,8 @@ let sanitize_basename raw =
 let sha256_hex s = Digestif.SHA256.(digest_string s |> to_hex)
 let hash8 abs_path = String.sub (sha256_hex abs_path) 0 8
 
-let derive ~path =
-  let abs = path_expand path in
+let derive ~(path : project_path) =
+  let abs = Project_path.to_string path in
   let base = sanitize_basename (Filename.basename abs) in
   Project_id.of_string_exn (base ^ "_" ^ hash8 abs)
 

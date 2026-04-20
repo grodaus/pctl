@@ -22,14 +22,17 @@ let fixture_ids =
 let test_derive_fixtures () =
   List.iter
     (fun (path, expected_id, _host) ->
-      let got = Project_id.to_string (Identity.derive ~path) in
+      let got =
+        Project_id.to_string
+          (Identity.derive ~path:(Project_path.of_raw path))
+      in
       Alcotest.(check string) ("derive " ^ path) expected_id got)
     fixture_ids
 
 let test_allocate_fixtures () =
   List.iter
     (fun (path, _id, expected_host) ->
-      let id = Identity.derive ~path in
+      let id = Identity.derive ~path:(Project_path.of_raw path) in
       let got = Host.to_string (Host_alloc.allocate ~id ~taken:[]) in
       Alcotest.(check string) ("host " ^ path) expected_host got)
     fixture_ids
@@ -48,15 +51,19 @@ let test_sanitize_basename_cases () =
   check "a" "a"
 
 let test_derive_determinism () =
-  let a = Identity.derive ~path:"/tmp/repeated-check" in
-  let b = Identity.derive ~path:"/tmp/repeated-check" in
+  let a =
+    Identity.derive ~path:(Project_path.of_raw "/tmp/repeated-check")
+  in
+  let b =
+    Identity.derive ~path:(Project_path.of_raw "/tmp/repeated-check")
+  in
   Alcotest.(check string)
     "same path → same id"
     (Project_id.to_string a)
     (Project_id.to_string b)
 
 let test_allocate_skips_taken () =
-  let id = Identity.derive ~path:"/tmp/my-project" in
+  let id = Identity.derive ~path:(Project_path.of_raw "/tmp/my-project") in
   let nat = Host_alloc.allocate ~id ~taken:[] in
   let bumped = Host_alloc.allocate ~id ~taken:[ nat ] in
   Alcotest.(check bool) "bumped differs" true (not (Host.equal nat bumped));
@@ -66,7 +73,7 @@ let test_allocate_skips_taken () =
     (Option.is_some (Host.of_string_opt (Host.to_string bumped)))
 
 let test_allocate_exhausted () =
-  let id = Identity.derive ~path:"/tmp/my-project" in
+  let id = Identity.derive ~path:(Project_path.of_raw "/tmp/my-project") in
   let all =
     List.init 253 (fun i ->
         Host.of_string_exn (Printf.sprintf "127.0.0.%d" (i + 2)))
@@ -111,14 +118,14 @@ let arb_path =
 let prop_derive_deterministic =
   QCheck.Test.make ~count:200 ~name:"derive: same path → same id" arb_path
     (fun p ->
-      let a = Identity.derive ~path:p in
-      let b = Identity.derive ~path:p in
+      let a = Identity.derive ~path:(Project_path.of_raw p) in
+      let b = Identity.derive ~path:(Project_path.of_raw p) in
       Project_id.equal a b)
 
 let prop_allocate_deterministic =
   QCheck.Test.make ~count:200
     ~name:"allocate: same id, empty taken → same host" arb_path (fun p ->
-      let id = Identity.derive ~path:p in
+      let id = Identity.derive ~path:(Project_path.of_raw p) in
       let a = Host_alloc.allocate ~id ~taken:[] in
       let b = Host_alloc.allocate ~id ~taken:[] in
       Host.equal a b)
@@ -126,7 +133,7 @@ let prop_allocate_deterministic =
 let prop_allocate_in_range =
   QCheck.Test.make ~count:200 ~name:"allocate: result parses as valid host"
     arb_path (fun p ->
-      let id = Identity.derive ~path:p in
+      let id = Identity.derive ~path:(Project_path.of_raw p) in
       let h = Host_alloc.allocate ~id ~taken:[] in
       Option.is_some (Host.of_string_opt (Host.to_string h)))
 
