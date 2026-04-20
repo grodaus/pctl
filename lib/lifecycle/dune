@@ -1,0 +1,11 @@
+; Lifecycle — the pctl up/reload/down primitive.
+;
+; Collapses render → write → hash → diff → apply → persist into a single
+; functor parameterised by the two I/O ports (Systemctl + Unit_store).
+; Callers (pipeline.ml, tests) instantiate against the concrete adapter
+; pair they want.
+(library
+ (name lifecycle)
+ (public_name pctl.lifecycle)
+ (libraries schema render unit_store plan state systemctl
+            digestif digestif.c))
