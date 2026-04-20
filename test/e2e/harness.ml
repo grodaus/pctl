@@ -402,10 +402,53 @@ let assert_false ~label cond =
 let assert_eq_string ~label expected got =
   Alcotest.(check string) label expected got
 
+(* Run a shell command, return (stdout_concat, exit_code). Stderr merged. *)
+let run_capture cmd =
+  let ic = Unix.open_process_in (cmd ^ " 2>&1") in
+  let buf = Buffer.create 256 in
+  (try
+     while true do
+       Buffer.add_string buf (input_line ic);
+       Buffer.add_char buf '\n'
+     done
+   with End_of_file -> ());
+  let status = Unix.close_process_in ic in
+  let rc =
+    match status with
+    | Unix.WEXITED n -> n
+    | Unix.WSIGNALED _ | Unix.WSTOPPED _ -> 128
+  in
+  (Buffer.contents buf, rc)
+
+(* Diagnostic snapshot: the five fields that actually distinguish "not
+ * active" causes (load-failed vs. crashed vs. still-activating vs.
+ * sandbox-rejected), plus the last 30 journal lines. Used by
+ * [assert_unit_active] and other asserts that need more than a bool. *)
+let unit_diagnostic unit_name : string =
+  let show, _ =
+    run_capture
+      (Printf.sprintf
+         "systemctl --user show %s -p LoadState -p ActiveState -p SubState -p \
+          Result -p ExecMainStatus -p ExecMainCode -p StatusErrno -p \
+          InvocationID --no-pager"
+         (Filename.quote unit_name))
+  in
+  let jr, _ =
+    run_capture
+      (Printf.sprintf
+         "journalctl --user --no-pager -n 30 --output=short-iso -u %s"
+         (Filename.quote unit_name))
+  in
+  Printf.sprintf "---- systemctl show %s ----\n%s---- journalctl -u %s (last 30) ----\n%s"
+    unit_name show unit_name jr
+
 let assert_unit_active unit_name =
-  assert_true
-    ~label:(Printf.sprintf "%s active" unit_name)
-    (wait_active unit_name)
+  if wait_active unit_name then
+    Printf.printf "ASSERT %s active\n%!" unit_name
+  else
+    Alcotest.failf
+      "%s did not reach active within 5s\n%s" unit_name
+      (unit_diagnostic unit_name)
 
 let assert_unit_inactive unit_name =
   assert_false
