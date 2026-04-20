@@ -147,6 +147,17 @@
         packages.pctl = pctlPkg;
         packages.default = pctlPkg;
 
+        # `ci` devShell: dune + all pctl build/test inputs. Used by
+        # .forgejo/workflows/ci.yml for the e2e job:
+        #   nix develop .#ci --command dune runtest --force --alias e2e
+        # `inputsFrom = [pctlPkg]` reuses the same build/propagated/check
+        # inputs the package declares, so this shell cannot drift from
+        # the package's dep list.
+        devShells.ci = pkgs.mkShell {
+          inputsFrom = [pctlPkg];
+          nativeBuildInputs = [ocamlPackages.dune_3 ocamlPackages.ocaml];
+        };
+
         # Fixture derivations surfaced as `.#fixtures.<name>`; see
         # nix/fixtures.nix for the regeneration recipe. Phase-2
         # Spec-loader tests consume the checked-in JSON under

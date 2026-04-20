@@ -38,4 +38,4 @@ jobs:
           git checkout "${GITHUB_SHA}"
 
       - name: Run e2e suite
-        run: nix develop .#ci --command dune runtest --force --alias e2e
+        run: nix develop .#ci --command dune build @e2e --force
