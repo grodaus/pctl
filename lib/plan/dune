@@ -1,13 +1,9 @@
-; Plan — manifest diff + apply via Systemctl port.
+; Plan — pure formatter for the "+ / ~ / = / -" reload summary.
 ;
-; Pure render_summary + a functor-parameterised apply. The functor
-; takes the Systemctl implementation (Dbus in production, In_mem in
-; tests) and returns an apply function taking that impl's handle type.
-;
-; Decision: functor over GADT. The brief permits either; the functor
-; is simpler at call sites because the handle type is statically known
-; once you pick the impl.
+; The Systemctl-application logic that used to live in [Plan.Make]
+; moved into [Lifecycle.Make] during the phase-5 consolidation; only
+; the diff-to-string formatter remains here.
 (library
  (name plan)
  (public_name pctl.plan)
- (libraries schema state systemctl))
+ (libraries schema))

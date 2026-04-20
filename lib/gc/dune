@@ -2,7 +2,7 @@
 ;
 ; Depends on schema + state (DB rows) and unit_store (removes unit files).
 ; Systemctl is abstracted through the Make functor so tests can substitute
-; the In_mem fake, matching Plan.Make / Probe.Make.
+; the In_mem fake, matching Probe.Make.
 
 (library
  (name gc)

@@ -91,11 +91,54 @@ module Write_all (US : Unit_store.S) = struct
 end
 
 module Make (M : Systemctl.S) (US : Unit_store.S) = struct
-  module Plan_M = Plan.Make (M)
   module WA = Write_all (US)
 
   type systemctl_handle = M.t
   type unit_store_handle = US.t
+
+  (* Apply logic — absorbed from the old [Plan.Make] during phase 5.
+     Ordering is load-bearing:
+       - [daemon_reload] frames every pass so systemd sees the new
+         on-disk shape before any start/stop fires.
+       - Slice rows run first so an [Added] slice is up before its
+         services try to start under it; a [Removed] slice's cascade
+         kill terminates every service in its cgroup.
+       - [Changed] on a slice row is a no-op: bouncing the slice
+         would restart every service under it, which is never what
+         [pctl reload] means.
+       - [Removed] tolerates stop failure — systemd may have already
+         GCed the unit after its file was deleted. Everything else
+         propagates. *)
+  let is_slice_unit (r : Schema.plan_row) : bool =
+    let s = Schema.Unit_filename.to_string r.unit_ in
+    let n = String.length s in
+    n >= 6 && String.sub s (n - 6) 6 = ".slice"
+
+  let sort_rows rows =
+    List.sort
+      (fun (a : Schema.plan_row) (b : Schema.plan_row) ->
+        Schema.Unit_filename.compare a.unit_ b.unit_)
+      rows
+
+  let apply_row (handle : M.t) (r : Schema.plan_row) : unit =
+    let unit_s = Schema.Unit_filename.to_string r.unit_ in
+    match r.action with
+    | Schema.Unchanged -> ()
+    | Schema.Added -> M.start_unit handle ~unit:unit_s
+    | Schema.Changed ->
+        if is_slice_unit r then ()
+        else M.restart_unit handle ~unit:unit_s
+    | Schema.Removed -> (
+        try M.stop_unit handle ~unit:unit_s
+        with Schema.Pctl_error _ -> ())
+
+  let apply_plan ~(handle : M.t) ~(rows : Schema.plan_row list) : unit =
+    let rows = sort_rows rows in
+    M.daemon_reload handle;
+    let slices, services = List.partition is_slice_unit rows in
+    List.iter (apply_row handle) slices;
+    List.iter (apply_row handle) services;
+    M.daemon_reload handle
 
   let reload ~(conn : State.Db.t) ~(handle : M.t) ~(unit_store : US.t)
       ~(ctx : ctx) ~(spec : Schema.spec option) () : report =
@@ -123,14 +166,14 @@ module Make (M : Systemctl.S) (US : Unit_store.S) = struct
              if r.action = Schema.Removed then
                US.remove unit_store ~unit_:r.unit_)
            diff;
-         Plan_M.apply ~handle ~rows:diff
+         apply_plan ~handle ~rows:diff
      | None ->
          (* tear-down path — preserves current pipeline.down ordering:
             stop the slice first so the cgroup cascade kills every
             service in it BEFORE we unload the slice from systemd's
             view, daemon_reload, remove files, daemon_reload. Skipping
-            Plan_M.apply here is deliberate; Plan.apply's slice-stop
-            would happen after the daemon_reload, losing the cascade. *)
+            [apply_plan] here is deliberate; its slice-stop would
+            happen after the daemon_reload, losing the cascade. *)
          let slice_unit =
            Schema.Unit_filename.to_string
              (Schema.Unit_filename.slice ~id:ctx.id)
