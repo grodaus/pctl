@@ -41,8 +41,23 @@ let () =
   Harness.with_scratch ~services:[ web ]
   @@ fun scratch ->
   let t0 = Unix.gettimeofday () in
-  Harness.check_rc_zero ~label:"up --wait"
-    (Harness.up_wait ~scratch ~timeout:10 ());
+  let rc, err = Harness.up_wait ~scratch ~timeout:10 () in
+  (* On failure, enrich the pctl stderr transcript with the service
+   * unit's own show/journal output: the probe times out when either
+   * the service never reaches Active, its ExecStart fails under
+   * systemd's exec sandboxing, or the flag file is being written to
+   * a path the probe cannot see. systemctl show + journalctl
+   * disambiguate all three. *)
+  let id_s = Schema.Project_id.to_string (Harness.project_id scratch) in
+  let err_enriched =
+    if rc = 0 then err
+    else
+      let unit_name = Harness.service_name id_s "web" in
+      Printf.sprintf "%s\n---- flag file ----\n%s exists=%b\n%s"
+        err flag (Sys.file_exists flag)
+        (Harness.unit_diagnostic unit_name)
+  in
+  Harness.check_rc_zero ~label:"up --wait" (rc, err_enriched);
   let elapsed = Unix.gettimeofday () -. t0 in
   if not (Sys.file_exists flag) then
     Alcotest.fail "flag file missing — service never became ready";
