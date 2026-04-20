@@ -64,7 +64,8 @@ module Make (M : Systemctl.S) = struct
     ignore_best_effort (fun () -> M.stop_unit handle ~unit:slice_unit);
     List.iter
       (fun (uf, _) ->
-        ignore_best_effort (fun () -> M.stop_unit handle ~unit:uf))
+        let unit_s = Schema.Unit_filename.to_string uf in
+        ignore_best_effort (fun () -> M.stop_unit handle ~unit:unit_s))
       manifest;
     ignore_best_effort (fun () -> M.daemon_reload handle);
     (* Remove the actual unit files on disk. [remove_units] is tolerant
@@ -74,7 +75,8 @@ module Make (M : Systemctl.S) = struct
         Install.Install.remove_units filenames;
         (* Also try to remove the slice file — some paths through the
          * codebase store the slice in the manifest, but be defensive. *)
-        Install.Install.remove_units [ Printf.sprintf "pctl-%s.slice" id_s ]);
+        let id = Schema.Project_id.of_string_exn id_s in
+        Install.Install.remove_units [ Schema.Unit_filename.slice ~id ]);
     ignore_best_effort (fun () -> M.daemon_reload handle);
     (* Wipe the manifest + project row. *)
     ignore_best_effort (fun () ->

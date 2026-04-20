@@ -116,17 +116,18 @@ module Install = struct
 
   (* Write one slice, return (unit_filename, sha256). *)
   let write_slice ~(spec : Schema.spec) ~(id : Schema.project_id) :
-      string * string =
+      Schema.Unit_filename.t * string =
     let bytes = Render.slice ~slice:spec.slice ~id in
     let unit_filename = Schema.Unit_filename.slice ~id in
     let unit_filename_s = Schema.Unit_filename.to_string unit_filename in
     write_file ~path:(Paths.unit_path ~unit_filename:unit_filename_s) ~bytes;
-    (unit_filename_s, sha256_hex bytes)
+    (unit_filename, sha256_hex bytes)
 
   (* Write one service + its drop-in. *)
   let write_service ~(service : Schema.service_spec)
       ~(id : Schema.project_id) ~(host : Schema.host)
-      ~(project_path : Schema.project_path) : string * string =
+      ~(project_path : Schema.project_path) :
+      Schema.Unit_filename.t * string =
     let bytes = Render.service ~service ~id ~project_path in
     let unit_filename =
       Schema.Unit_filename.service ~id ~service:service.name
@@ -136,7 +137,7 @@ module Install = struct
     write_file
       ~path:(Paths.dropin_file ~unit_filename:unit_filename_s)
       ~bytes:(service_dropin_body ~id ~host);
-    (unit_filename_s, sha256_hex bytes)
+    (unit_filename, sha256_hex bytes)
 
   let write_units ~(spec : Schema.spec) ~(id : Schema.project_id)
       ~(project_path : Schema.project_path) ~(host : Schema.host) :
@@ -149,11 +150,12 @@ module Install = struct
              write_service ~service:svc ~id ~host ~project_path)
     in
     slice_entry :: service_entries
-    |> List.sort (fun (a, _) (b, _) -> String.compare a b)
+    |> List.sort (fun (a, _) (b, _) -> Schema.Unit_filename.compare a b)
 
-  let remove_units (unit_filenames : string list) : unit =
+  let remove_units (unit_filenames : Schema.Unit_filename.t list) : unit =
     List.iter
-      (fun unit_filename ->
+      (fun uf ->
+        let unit_filename = Schema.Unit_filename.to_string uf in
         rm_rf (Paths.dropin_dir ~unit_filename);
         (try Sys.remove (Paths.unit_path ~unit_filename)
          with Sys_error _ -> ()))

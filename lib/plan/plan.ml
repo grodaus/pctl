@@ -23,14 +23,15 @@
  * For the detailed "+ name" listing see [render_summary]. *)
 
 let is_slice_unit (r : Schema.plan_row) : bool =
-  let n = String.length r.unit_ in
-  n >= 6 && String.sub r.unit_ (n - 6) 6 = ".slice"
+  let s = Schema.Unit_filename.to_string r.unit_ in
+  let n = String.length s in
+  n >= 6 && String.sub s (n - 6) 6 = ".slice"
 
 let sort_rows rows =
   (* Stable, lexicographic on unit_filename. *)
   List.sort
     (fun (a : Schema.plan_row) (b : Schema.plan_row) ->
-      String.compare a.unit_ b.unit_)
+      Schema.Unit_filename.compare a.unit_ b.unit_)
     rows
 
 let render_summary (rows : Schema.plan_row list) : string =
@@ -41,29 +42,30 @@ let render_summary (rows : Schema.plan_row list) : string =
       Buffer.add_string buf
         (Printf.sprintf "%s %s\n"
            (Schema.action_to_symbol r.action)
-           r.unit_))
+           (Schema.Unit_filename.to_string r.unit_)))
     rows;
   Buffer.contents buf
 
 module Make (M : Systemctl.S) = struct
   let apply_row (t : M.t) (r : Schema.plan_row) : unit =
+    let unit_s = Schema.Unit_filename.to_string r.unit_ in
     match r.action with
     | Schema.Unchanged -> ()
     | Schema.Added ->
         (* Start — works for both slice and service rows. *)
-        M.start_unit t ~unit:r.unit_
+        M.start_unit t ~unit:unit_s
     | Schema.Changed ->
         if is_slice_unit r then
           (* See oracle: reload.nu skips slice-level actions (restarting
            * a slice bounces every service under it). *)
           ()
         else
-          M.restart_unit t ~unit:r.unit_
+          M.restart_unit t ~unit:unit_s
     | Schema.Removed ->
         (* Tolerate failure: systemd may report NoSuchUnit after the
          * unit file has been deleted. A failed stop shouldn't abort
          * the reload — matches the Nushell reload oracle. *)
-        (try M.stop_unit t ~unit:r.unit_
+        (try M.stop_unit t ~unit:unit_s
          with Schema.Pctl_error _ -> ())
 
   (* daemon_reload first (so systemd sees new/updated unit files on disk

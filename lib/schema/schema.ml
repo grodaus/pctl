@@ -350,10 +350,10 @@ type unit_filename = Unit_filename.t
 
 (* manifest — keyed by the final on-disk unit filename
  * (pctl-<id>-<service>.service or pctl-<id>.slice). No placeholders. *)
-type manifest = (string * string) list
+type manifest = (Unit_filename.t * string) list
 
 type plan_row = {
-  unit_ : string;
+  unit_ : Unit_filename.t;
   action : action;
   old_hash : string option;
   new_hash : string option;

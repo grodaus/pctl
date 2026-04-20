@@ -101,26 +101,33 @@ let test_projects_crud () =
 
 (* ----- manifest replacement ------------------------------------- *)
 
+(* Typed manifest fixtures — Unit_filename.of_string_exn only rejects
+ * empty / slash-containing leaves, so these plain strings are accepted. *)
+let uf = Schema.Unit_filename.of_string_exn
+
+let stringify_manifest (m : Schema.manifest) : (string * string) list =
+  List.map (fun (k, v) -> (Schema.Unit_filename.to_string k, v)) m
+
 let test_manifest_replace () =
   eio_run @@ fun ~sw ~stdenv ->
   let conn = fresh_conn ~sw ~stdenv in
   Db.migrate conn;
   Projects.upsert conn (mk_project "proj_1" "/tmp/proj_1");
   let first : Schema.manifest =
-    [ ("a.service", "h_a1"); ("b.service", "h_b1") ]
+    [ (uf "a.service", "h_a1"); (uf "b.service", "h_b1") ]
   in
   Projects.replace_manifest conn ~project_id:"proj_1" ~rows:first;
   let got = Projects.load_manifest conn ~project_id:"proj_1" in
   Alcotest.(check (list (pair string string)))
-    "first manifest" first got;
+    "first manifest" (stringify_manifest first) (stringify_manifest got);
   let second : Schema.manifest =
-    [ ("b.service", "h_b2"); ("c.service", "h_c1") ]
+    [ (uf "b.service", "h_b2"); (uf "c.service", "h_c1") ]
   in
   Projects.replace_manifest conn ~project_id:"proj_1" ~rows:second;
   let got2 = Projects.load_manifest conn ~project_id:"proj_1" in
   Alcotest.(check (list (pair string string)))
     "second manifest (replaces, doesn't merge)"
-    second got2
+    (stringify_manifest second) (stringify_manifest got2)
 
 (* ----- session reset ------------------------------------------- *)
 
@@ -221,7 +228,7 @@ let test_foreign_keys_cascade () =
   Db.migrate conn;
   Projects.upsert conn (mk_project "proj_1" "/tmp/proj_1");
   Projects.replace_manifest conn ~project_id:"proj_1"
-    ~rows:[ ("a.service", "h1"); ("b.service", "h2") ];
+    ~rows:[ (uf "a.service", "h1"); (uf "b.service", "h2") ];
   Alcotest.(check int)
     "manifest inserted" 2
     (List.length (Projects.load_manifest conn ~project_id:"proj_1"));

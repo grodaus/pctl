@@ -158,7 +158,8 @@ let replace_manifest ((module C : Caqti_eio.CONNECTION)) ~project_id
         | Ok () ->
             let rec loop = function
               | [] -> Ok ()
-              | (unit_fn, sha256) :: tl -> (
+              | (uf, sha256) :: tl -> (
+                  let unit_fn = Schema.Unit_filename.to_string uf in
                   match C.exec manifest_insert_req (project_id, unit_fn, sha256) with
                   | Ok () -> loop tl
                   | Error e -> Error e)
@@ -171,15 +172,20 @@ let replace_manifest ((module C : Caqti_eio.CONNECTION)) ~project_id
 let load_manifest ((module C : Caqti_eio.CONNECTION)) ~project_id :
     Schema.manifest =
   match C.collect_list manifest_select_req project_id with
-  | Ok rows -> rows
+  | Ok rows ->
+      List.map
+        (fun (s, sha) -> (Schema.Unit_filename.of_string_exn s, sha))
+        rows
   | Error e -> raise_io ~id:project_id e
 
 (* ---- Pure manifest diff (ported from pctl/lib/manifest.nu) --------- *)
 
 open Schema
 
+module UfMap = Map.Make (Schema.Unit_filename)
+
 let diff_manifest ~(before : manifest) ~(after : manifest) : plan_row list =
-  let module M = StringMap in
+  let module M = UfMap in
   let before_m =
     List.fold_left (fun acc (k, v) -> M.add k v acc) M.empty before
   in
