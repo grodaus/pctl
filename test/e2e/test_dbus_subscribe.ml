@@ -31,8 +31,8 @@ let () =
           ("Type", "simple");
           ( "ExecStart",
             Printf.sprintf
-              "%s -c 'exec %s -c \"while true; do sleep 3600; done\"'"
-              bash bash );
+              "%s -c 'exec %s -c \"while true; do %s 3600; done\"'"
+              bash bash Harness.sleep_bin );
         ];
       workspace = None;
     }

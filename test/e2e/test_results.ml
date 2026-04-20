@@ -48,9 +48,9 @@ let () =
          oneshot "fail" false_bin;
          simple "slow"
            (Printf.sprintf
-              "%s -c 'sleep 0.5; exec %s -c \"while true; do sleep 3600; \
+              "%s -c '%s 0.5; exec %s -c \"while true; do %s 3600; \
                done\"'"
-              bash bash);
+              bash Harness.sleep_bin bash Harness.sleep_bin);
        ]
    @@ fun scratch ->
    (* pctl up --no-block so `fail` doesn't short-circuit the apply pass
@@ -133,9 +133,9 @@ let () =
         oneshot "ok" true_bin;
         simple "slow"
           (Printf.sprintf
-             "%s -c 'sleep 0.5; exec %s -c \"while true; do sleep 3600; \
+             "%s -c '%s 0.5; exec %s -c \"while true; do %s 3600; \
               done\"'"
-             bash bash);
+             bash Harness.sleep_bin bash Harness.sleep_bin);
       ]
   @@ fun scratch ->
   Harness.check_rc_zero ~label:"up" (Harness.up ~scratch);
