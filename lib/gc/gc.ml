@@ -71,14 +71,16 @@ module Make (M : Systemctl.S) = struct
         ignore_best_effort (fun () -> M.stop_unit handle ~unit:unit_s))
       manifest;
     ignore_best_effort (fun () -> M.daemon_reload handle);
-    (* Remove the actual unit files on disk. [remove_units] is tolerant
-     * of non-existence already. *)
+    (* Remove the actual unit files on disk. Unit_store.Fs.remove
+     * tolerates non-existence already. *)
     ignore_best_effort (fun () ->
-        let filenames = List.map fst manifest in
-        Install.Install.remove_units filenames;
-        (* Also try to remove the slice file — some paths through the
-         * codebase store the slice in the manifest, but be defensive. *)
-        Install.Install.remove_units [ Schema.Unit_filename.slice ~id ]);
+        let us = Unit_store.Fs.create () in
+        List.iter
+          (fun (uf, _) -> Unit_store.Fs.remove us ~unit_:uf)
+          manifest;
+        (* Defensive: some earlier paths did not persist the slice in
+         * the manifest. Removing it again is a no-op. *)
+        Unit_store.Fs.remove us ~unit_:(Schema.Unit_filename.slice ~id));
     ignore_best_effort (fun () -> M.daemon_reload handle);
     (* Wipe the manifest + project row. *)
     ignore_best_effort (fun () ->

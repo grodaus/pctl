@@ -150,9 +150,9 @@ let taken_hosts (conn : State.Db.t) : Schema.host list =
 (* ---- Port-dependent commands ------------------------------------ *)
 
 module Make (P : PORTS) = struct
-  module Plan_P = Plan.Make (P.Systemctl)
   module Probe_P = Probe.Make (P.Systemctl)
   module Gc_P = Gc.Make (P.Systemctl)
+  module Lifecycle_P = Lifecycle.Make (P.Systemctl) (Unit_store.Fs)
 
   (* Invariant 5: every Systemctl operation runs under a fresh handle
    * scoped to an inner Switch so the dispatch fiber (Dbus) has a
@@ -165,9 +165,6 @@ module Make (P : PORTS) = struct
       ~finally:(fun () -> P.Systemctl.close h)
       (fun () -> f h)
 
-  let apply_plan ~env ~rows =
-    with_handle ~env (fun h -> Plan_P.apply ~handle:h ~rows)
-
   let opportunistic_sweep ~env ~conn =
     with_handle ~env (fun h ->
         Gc_P.opportunistic_sweep ~conn ~handle:h)
@@ -175,18 +172,18 @@ module Make (P : PORTS) = struct
   let purge ~env ~conn : int =
     with_handle ~env (fun h -> Gc_P.purge ~conn ~handle:h)
 
-  (* --- Internal: the materialize pipeline (invariants 1–4) ------- *)
+  (* --- Internal: spec + identity + host + metadata upsert -------- *)
 
-  type ctx = {
-    id : Schema.project_id;
-    host : Schema.host;
-    spec : Schema.spec;
-    conn : State.Db.t;
-    new_rows : Schema.manifest;
-    diff : Schema.plan_row list;
-  }
-
-  let with_project ~sw ~env ?tree ?nix ?path (k : ctx -> 'a) : 'a =
+  (* Yields the resolved [ctx], the DB connection, the parsed spec, and
+     a fresh [Unit_store.Fs.t] handle; Lifecycle then owns the
+     render/write/diff/apply/persist sequence. *)
+  let with_project ~sw ~env ?tree ?nix ?path
+      (k :
+        Lifecycle.ctx ->
+        State.Db.t ->
+        Schema.spec ->
+        Unit_store.Fs.t ->
+        'a) : 'a =
     let project = resolve_path path in
     let paths =
       Project_paths.resolve ~env ~sw
@@ -205,14 +202,7 @@ module Make (P : PORTS) = struct
           Identity.Host_alloc.allocate ~id ~taken:(taken_hosts conn)
     in
     let id_s = Schema.Project_id.to_string id in
-    let old_manifest = State.Projects.load_manifest conn ~project_id:id_s in
     let project_path_s = Schema.Project_path.to_string project in
-    let new_manifest =
-      Install.Install.write_units ~spec ~id ~project_path:project ~host
-    in
-    let diff =
-      State.Projects.diff_manifest ~before:old_manifest ~after:new_manifest
-    in
     let started_at =
       match existing_started_at conn ~id with
       | Some s when s <> "" -> s
@@ -229,18 +219,9 @@ module Make (P : PORTS) = struct
         session_id = (if boot_id = "" then None else Some boot_id);
         spec_json = Some spec_blob;
       };
-    State.Projects.replace_manifest conn ~project_id:id_s ~rows:new_manifest;
-    k
-      {
-        id;
-        host;
-        spec;
-        conn;
-        new_rows = new_manifest;
-        diff;
-      }
-
-  let apply (ctx : ctx) ~sw:_ ~env = apply_plan ~env ~rows:ctx.diff
+    let ctx : Lifecycle.ctx = { id; host; project_path = project } in
+    let us = Unit_store.Fs.create () in
+    k ctx conn spec us
 
   let with_registered ~sw ~env ?(sweep = false) ?path
       (k : State.Db.t -> Schema.project_id -> 'a) : 'a =
@@ -260,35 +241,35 @@ module Make (P : PORTS) = struct
     end
     else
       run @@ fun () ->
-      with_project ~sw ~env ?tree ?nix ?path @@ fun ctx ->
-      apply ctx ~sw ~env;
+      with_project ~sw ~env ?tree ?nix ?path @@ fun ctx conn spec us ->
+      let r =
+        with_handle ~env (fun h ->
+            Lifecycle_P.up ~conn ~handle:h ~unit_store:us ~ctx ~spec ())
+      in
       let suffix = if no_block then " (async)" else "" in
       Printf.printf "project %s up · %d units · host=%s%s\n"
         (Schema.Project_id.to_string ctx.id)
-        (List.length ctx.new_rows)
+        r.units_on_disk
         (Schema.Host.to_string ctx.host)
         suffix;
       if wait then
         with_handle ~env @@ fun h ->
         let _rows =
           Probe_P.wait_all ~sw ~env ~handle:h ~id:ctx.id ~host:ctx.host
-            ~spec:ctx.spec ~timeout_seconds:timeout ~strategy:`Throw_first
+            ~spec ~timeout_seconds:timeout ~strategy:`Throw_first
         in
         ()
 
   let reload ~sw ~env ?tree ?nix ?path () : int =
     run @@ fun () ->
-    with_project ~sw ~env ?tree ?nix ?path @@ fun ctx ->
-    print_string (Plan.render_summary ctx.diff);
-    print_endline (State.Projects.manifest_summary ctx.diff);
-    let removed_files =
-      List.filter_map
-        (fun (r : Schema.plan_row) ->
-          if r.action = Schema.Removed then Some r.unit_ else None)
-        ctx.diff
+    with_project ~sw ~env ?tree ?nix ?path @@ fun ctx conn spec us ->
+    let r =
+      with_handle ~env (fun h ->
+          Lifecycle_P.reload ~conn ~handle:h ~unit_store:us ~ctx
+            ~spec:(Some spec) ())
     in
-    Install.Install.remove_units removed_files;
-    apply ctx ~sw ~env
+    print_string (Plan.render_summary r.diff);
+    print_endline (State.Projects.manifest_summary r.diff)
 
   let down ~sw ~env ?path ?(quiet = false) () : int =
     let work () =
@@ -308,17 +289,31 @@ module Make (P : PORTS) = struct
                       id_s project_path;
                 }))
       end;
-      let slice_unit =
-        Schema.Unit_filename.to_string (Schema.Unit_filename.slice ~id)
+      (* A registered project with a non-empty manifest always has a
+         host set (upsert writes both together). Fall through to
+         Registry_io if the DB is inconsistent rather than fabricate
+         a dummy value. *)
+      let host =
+        match existing_host conn ~id with
+        | Some h -> h
+        | None ->
+            raise
+              (Schema.Pctl_error
+                 (Schema.Registry_io
+                    {
+                      id = id_s;
+                      reason =
+                        "project has a manifest row but no host — registry \
+                         is inconsistent";
+                    }))
       in
-      with_handle ~env (fun h ->
-          (try P.Systemctl.stop_unit h ~unit:slice_unit
-           with Schema.Pctl_error _ -> ());
-          P.Systemctl.daemon_reload h);
-      Install.Install.remove_units (List.map fst existing);
-      with_handle ~env (fun h -> P.Systemctl.daemon_reload h);
-      State.Projects.replace_manifest conn ~project_id:id_s ~rows:[];
-      State.Projects.clear_runtime_fields conn ~id:id_s;
+      let project = resolve_path path in
+      let ctx : Lifecycle.ctx = { id; host; project_path = project } in
+      let us = Unit_store.Fs.create () in
+      let _r =
+        with_handle ~env (fun h ->
+            Lifecycle_P.down ~conn ~handle:h ~unit_store:us ~ctx ())
+      in
       if not quiet then Printf.printf "project %s down\n" id_s
     in
     if quiet then
