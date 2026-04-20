@@ -1,12 +1,6 @@
-(* Project identity — ported from the prior Nushell `derive-id` and
- * `allocate-host`. The Nushell implementation is the behavioural oracle;
- * the OCaml port must produce byte-identical ids and hosts for every
- * path so the binaries swap cleanly. See test/unit/test_identity.ml for
- * fixture-parity anchors.
- *
- * Path expansion (tilde/env substitution, normalization) lives in
- * [Schema.Project_path.of_raw]; [derive] takes an already-expanded
- * [project_path]. *)
+(* Project identity: derive a stable id from an absolute path, allocate
+ * a 127.0.0.N host for it. Path expansion (tilde/env/normalize) lives
+ * in [Schema.Project_path.of_raw]; [derive] takes the typed result. *)
 
 open Schema
 
@@ -45,8 +39,7 @@ let derive ~(path : project_path) =
  *   walk        = bump ..254 then wrap to 2; stop at first free slot
  *   exhaustion  = raise after 253 tries
  *
- * MD5 is a seed, not a cryptographic choice — inherited from the Nushell
- * implementation for byte-compat with existing allocations. *)
+ * MD5 is a seed, not a cryptographic choice. *)
 
 module Host_alloc = struct
   module Host_set = Set.Make (String)

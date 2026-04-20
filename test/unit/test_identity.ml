@@ -1,12 +1,13 @@
-(* Identity — derive, allocate, fixture parity with the Nushell oracle. *)
+(* Identity — derive, allocate. *)
 
 open Schema
 module Host_alloc = Identity.Host_alloc
 
-(* Fixture parity anchors — computed once from the prior Nushell
- * identity module (`derive-id <path>` and `allocate-host`) and hardcoded
- * here. If the OCaml port drifts from the Nushell semantics, THESE fail
- * first — treat a fail as a port bug, not a test bug. *)
+(* Determinism anchors. Absolute paths only (no tilde/env tokens): a
+ * future change to [Project_path.of_raw]'s tilde/env semantics must
+ * not change these ids, because the input bytes [derive] hashes are
+ * the normalized absolute path. If one of these fails, the [derive]
+ * algorithm changed — treat that as a break. *)
 let fixture_ids =
   [
     ("/tmp/my-project", "my_project_52089b5d", "127.0.0.84");
@@ -62,6 +63,26 @@ let test_derive_determinism () =
     (Project_id.to_string a)
     (Project_id.to_string b)
 
+(* Tilde expansion: [Project_path.of_raw] normalizes first, so a path
+ * supplied as [~/foo] and the literal [$HOME/foo] must produce the
+ * same project id. This is the behaviour the earlier Nushell-oracle
+ * framing blocked. *)
+let test_derive_tilde_equivalent_to_home () =
+  let home =
+    match Sys.getenv_opt "HOME" with
+    | Some h -> h
+    | None -> Alcotest.fail "HOME not set — test requires a set HOME"
+  in
+  let a = Identity.derive ~path:(Project_path.of_raw "~/pctl-test-derive") in
+  let b =
+    Identity.derive
+      ~path:(Project_path.of_raw (home ^ "/pctl-test-derive"))
+  in
+  Alcotest.(check string)
+    "~/foo ≡ $HOME/foo"
+    (Project_id.to_string a)
+    (Project_id.to_string b)
+
 let test_allocate_skips_taken () =
   let id = Identity.derive ~path:(Project_path.of_raw "/tmp/my-project") in
   let nat = Host_alloc.allocate ~id ~taken:[] in
@@ -90,7 +111,9 @@ let test_allocate_exhausted () =
           }))
     (fun () -> ignore (Host_alloc.allocate ~id ~taken:all))
 
-(* QCheck properties. *)
+(* QCheck properties — generator produces absolute paths with no tilde
+ * or env-var tokens; the point is that [derive] is deterministic and
+ * [allocate] always returns a parseable host for any id. *)
 
 let arb_path =
   let open QCheck in
@@ -144,9 +167,11 @@ let () =
       ( "identity",
         [
           test_case "sanitize_basename cases" `Quick test_sanitize_basename_cases;
-          test_case "derive fixture parity" `Quick test_derive_fixtures;
-          test_case "allocate fixture parity" `Quick test_allocate_fixtures;
+          test_case "derive fixtures" `Quick test_derive_fixtures;
+          test_case "allocate fixtures" `Quick test_allocate_fixtures;
           test_case "derive determinism" `Quick test_derive_determinism;
+          test_case "derive ~/foo = $HOME/foo" `Quick
+            test_derive_tilde_equivalent_to_home;
           test_case "allocate skips taken" `Quick test_allocate_skips_taken;
           test_case "allocate exhausted raises" `Quick test_allocate_exhausted;
         ]
