@@ -6,7 +6,7 @@
  *   path         TEXT NOT NULL
  *   host         TEXT
  *   started_at   TEXT
- *   store_tree   TEXT
+ *   spec_file   TEXT
  *   session_id   TEXT
  *   spec_json    TEXT  -- full spec.json as persisted by the last `up`
  *
@@ -26,13 +26,13 @@ type t = {
   path : string;
   host : string option;
   started_at : string option;
-  store_tree : string option;
+  spec_file : string option;
   session_id : string option;
   spec_json : string option;
 }
 
 let row_type =
-  (* id, path, host, started_at, store_tree, session_id, spec_json *)
+  (* id, path, host, started_at, spec_file, session_id, spec_json *)
   t7 string string (option string) (option string) (option string)
     (option string) (option string)
 
@@ -41,12 +41,12 @@ let to_row r =
     r.path,
     r.host,
     r.started_at,
-    r.store_tree,
+    r.spec_file,
     r.session_id,
     r.spec_json )
 
-let of_row (id, path, host, started_at, store_tree, session_id, spec_json) =
-  { id; path; host; started_at; store_tree; session_id; spec_json }
+let of_row (id, path, host, started_at, spec_file, session_id, spec_json) =
+  { id; path; host; started_at; spec_file; session_id; spec_json }
 
 (* Upsert: INSERT OR on-conflict update. Keeps id/path stable; other
  * columns are overwritten (they are session-scoped and reset by
@@ -54,29 +54,29 @@ let of_row (id, path, host, started_at, store_tree, session_id, spec_json) =
 let upsert_req =
   (row_type ->. unit)
     "INSERT INTO projects \
-       (id, path, host, started_at, store_tree, session_id, spec_json) \
+       (id, path, host, started_at, spec_file, session_id, spec_json) \
      VALUES (?, ?, ?, ?, ?, ?, ?) \
      ON CONFLICT(id) DO UPDATE SET \
        path       = excluded.path, \
        host       = excluded.host, \
        started_at = excluded.started_at, \
-       store_tree = excluded.store_tree, \
+       spec_file = excluded.spec_file, \
        session_id = excluded.session_id, \
        spec_json  = excluded.spec_json"
 
 let get_by_id_req =
   (string ->? row_type)
-    "SELECT id, path, host, started_at, store_tree, session_id, spec_json \
+    "SELECT id, path, host, started_at, spec_file, session_id, spec_json \
      FROM projects WHERE id = ?"
 
 let get_by_path_req =
   (string ->? row_type)
-    "SELECT id, path, host, started_at, store_tree, session_id, spec_json \
+    "SELECT id, path, host, started_at, spec_file, session_id, spec_json \
      FROM projects WHERE path = ?"
 
 let all_req =
   (unit ->* row_type)
-    "SELECT id, path, host, started_at, store_tree, session_id, spec_json \
+    "SELECT id, path, host, started_at, spec_file, session_id, spec_json \
      FROM projects ORDER BY id"
 
 let delete_by_id_req =
@@ -90,7 +90,7 @@ let delete_by_id_req =
 let clear_runtime_fields_req =
   (string ->. unit)
     "UPDATE projects \
-     SET host = NULL, started_at = NULL, store_tree = NULL, session_id = NULL, \
+     SET host = NULL, started_at = NULL, spec_file = NULL, session_id = NULL, \
          spec_json = NULL \
      WHERE id = ?"
 

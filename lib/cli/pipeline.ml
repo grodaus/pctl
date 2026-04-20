@@ -225,7 +225,7 @@ module Make (P : PORTS) = struct
         path = project_path_s;
         host = Some (Schema.Host.to_string host);
         started_at = Some started_at;
-        store_tree = Some (Fpath.to_string paths.spec_file);
+        spec_file = Some (Fpath.to_string paths.spec_file);
         session_id = (if boot_id = "" then None else Some boot_id);
         spec_json = Some spec_blob;
       };

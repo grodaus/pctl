@@ -1,6 +1,6 @@
 (* Session — boot-scoped clearing of per-invocation project columns.
  *
- * pctl binds host / started_at / store_tree / session_id to a single
+ * pctl binds host / started_at / spec_file / session_id to a single
  * boot: after a reboot, the systemd --user instance is gone, so any
  * row still carrying a stale session_id is pointing at nothing. On
  * every invocation, [reset] clears those columns for rows whose
@@ -37,7 +37,7 @@ let reset_query =
   let open Caqti_type.Std in
   (string ->. unit)
     "UPDATE projects \
-     SET host = NULL, started_at = NULL, store_tree = NULL, session_id = NULL, \
+     SET host = NULL, started_at = NULL, spec_file = NULL, session_id = NULL, \
          spec_json = NULL \
      WHERE session_id IS NOT NULL AND session_id != ?"
 

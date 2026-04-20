@@ -117,6 +117,9 @@ let meta_set ((module C : Caqti_eio.CONNECTION)) ~key ~value : unit =
 let init_sql : string = [%blob "../../migrations/001_init.sql"]
 let spec_blob_sql : string = [%blob "../../migrations/002_spec_blob.sql"]
 
+let rename_store_tree_sql : string =
+  [%blob "../../migrations/003_rename_store_tree_to_spec_file.sql"]
+
 (* A migration: version it bumps to and the SQL to run. Kept as a
  * simple list so adding a migration in a future phase is a one-line
  * append; no external catalog. *)
@@ -126,6 +129,7 @@ let migrations : migration list =
   [
     { target_version = 1; sql = init_sql };
     { target_version = 2; sql = spec_blob_sql };
+    { target_version = 3; sql = rename_store_tree_sql };
   ]
 
 (* [meta.schema_version] is a TEXT column (see 001_init.sql). Absent

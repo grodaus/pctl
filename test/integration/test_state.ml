@@ -41,7 +41,7 @@ let test_migrate_idempotent () =
   (* Second run must be a no-op (no errors, version unchanged). *)
   Db.migrate conn;
   Alcotest.(check (option string))
-    "schema_version" (Some "2")
+    "schema_version" (Some "3")
     (Db.meta_get conn ~key:"schema_version");
   Alcotest.(check (option string))
     "last_boot_id starts empty" (Some "")
@@ -49,9 +49,9 @@ let test_migrate_idempotent () =
 
 (* ----- projects CRUD -------------------------------------------- *)
 
-let mk_project ?host ?started_at ?store_tree ?session_id ?spec_json id path :
+let mk_project ?host ?started_at ?spec_file ?session_id ?spec_json id path :
     Projects.t =
-  { id; path; host; started_at; store_tree; session_id; spec_json }
+  { id; path; host; started_at; spec_file; session_id; spec_json }
 
 let test_projects_crud () =
   eio_run @@ fun ~sw ~stdenv ->
@@ -59,7 +59,7 @@ let test_projects_crud () =
   Db.migrate conn;
   let p1 =
     mk_project ~host:"127.0.0.42" ~started_at:"2026-04-19T00:00:00Z"
-      ~store_tree:"/nix/store/xxx" ~session_id:"boot-a" "proj_1"
+      ~spec_file:"/nix/store/xxx" ~session_id:"boot-a" "proj_1"
       "/tmp/proj_1"
   in
   let p2 = mk_project "proj_2" "/tmp/proj_2" in
@@ -136,7 +136,7 @@ let test_session_reset_wipes_stale () =
   let conn = fresh_conn ~sw ~stdenv in
   Db.migrate conn;
   Projects.upsert conn
-    (mk_project ~host:"127.0.0.42" ~started_at:"now" ~store_tree:"/nix/store/x"
+    (mk_project ~host:"127.0.0.42" ~started_at:"now" ~spec_file:"/nix/store/x"
        ~session_id:"boot-a" "proj_1" "/tmp/proj_1");
   Session.reset_with_boot_id conn ~boot_id:"boot-b";
   (match Projects.get_by_id conn ~id:"proj_1" with
@@ -144,7 +144,7 @@ let test_session_reset_wipes_stale () =
   | Some got ->
       Alcotest.(check (option string)) "host NULL" None got.host;
       Alcotest.(check (option string)) "started_at NULL" None got.started_at;
-      Alcotest.(check (option string)) "store_tree NULL" None got.store_tree;
+      Alcotest.(check (option string)) "spec_file NULL" None got.spec_file;
       Alcotest.(check (option string)) "session_id NULL" None got.session_id);
   Alcotest.(check (option string))
     "meta last_boot_id" (Some "boot-b")
@@ -155,7 +155,7 @@ let test_session_reset_noop_same_boot () =
   let conn = fresh_conn ~sw ~stdenv in
   Db.migrate conn;
   let p =
-    mk_project ~host:"127.0.0.42" ~started_at:"t0" ~store_tree:"/tree"
+    mk_project ~host:"127.0.0.42" ~started_at:"t0" ~spec_file:"/tree"
       ~session_id:"boot-a" "proj_1" "/tmp/proj_1"
   in
   Projects.upsert conn p;

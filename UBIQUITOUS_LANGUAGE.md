@@ -24,7 +24,7 @@ _Rendered by [`lib/render/`](./lib/render); written to disk by [`lib/install/`](
 | --------------- | --------------------------------------------------------------------------------------------------------------------------- | ---------------------------- |
 | **Unit**        | A systemd unit file — either a **slice** or a **service** — emitted by pctl                                                 | File, config                 |
 | **Slice**       | The `pctl-<id>.slice` that cgroup-parents every service in a project                                                        | Group, namespace             |
-| **Store tree**  | The `/nix/store` output of `mkProject` — placeholder-bearing unit files on disk, consumed by `up` and `reload`              | Tree, bundle, output         |
+| **Spec file**   | The `/nix/store` output of `mkProject`. Because `mkProject` uses `pkgs.writeText`, the outpath IS the `spec.json` file (not a directory). OCaml renders unit files from the spec at install time. Consumed by `up` and `reload`. | Store tree, tree, bundle     |
 | **Drop-in**     | The `pctl-runtime.conf` file pctl writes into `<unit>.d/` carrying **PCTL_ID** (+ **PCTL_HOST** on services)                | Override, extension          |
 | **Manifest**    | `{ unit-filename: sha256 }` snapshot persisted on `up`/`reload`, used as the left side of the next reload diff              | Hash map, lock file          |
 | **User.control**| `$XDG_RUNTIME_DIR/systemd/user.control/` — the live unit directory systemd --user reads                                     | Install dir, runtime dir     |
@@ -77,7 +77,6 @@ _Implemented in [`lib/probe/`](./lib/probe) (parallel Eio fibers + dbus subscrip
 | -------------------- | ------------------------------------------------------------------------------------------------------------------------------- | -------------------------- |
 | **Readiness probe**  | The `readinessProbe` spec field — an exec argv `pctl up --wait` polls until it exits 0                                          | Healthcheck, liveness probe |
 | **Ready**            | A service whose **readiness probe** has exited 0 (or whose unit reached `active`, if no probe is declared)                      | Up, started, healthy       |
-| **Probes side-car**  | `probes.json` — file mkProject emits at the root of the **store tree** carrying every service's **readiness probe**; consumed only by the CLI, never rendered into a **unit** | Probe manifest, probes file |
 | **Wait**             | The `pctl up --wait` mode: after `up` starts every service, block until each is **ready** (or the overall timeout fires)        | Block, await               |
 
 ## Testing
@@ -95,16 +94,16 @@ _Three layers in [`test/unit/`](./test/unit), [`test/integration/`](./test/integ
 
 - A **Project** has exactly one **Project id** (pure function of **Project path**) and exactly one allocated **Host**.
 - A **Project** owns one **Slice** and zero-or-more **Service** units; every **Service** runs inside its **Project**'s **Slice**.
-- `mkProject` produces one **Store tree** per **Spec**; `up` and `reload` both consume a **Store tree**.
+- `mkProject` produces one **Spec file** per **Spec**; `up` and `reload` both consume a **Spec file**.
 - Each installed **Unit** has exactly one **Drop-in** carrying runtime env (**PCTL_ID** on all, **PCTL_HOST** on services only).
 - `up` writes one **Registry** entry and one **Manifest**; `reload` reads the **Manifest**, computes a **Plan**, then rewrites both.
 - Two **Worktrees** of the same repo have distinct **Project ids** and **Hosts** and therefore distinct **Slices** that coexist on one `systemd --user` session.
 
 ## Example dialogue
 
-> **Dev:** "When I run `pctl up`, where does the **store tree** actually come from?"
+> **Dev:** "When I run `pctl up`, where does the **spec file** actually come from?"
 
-> **Domain expert:** "`mkProject` reads your **spec** and emits a **store tree** — a single `spec.json` blob holding per-service configs as pure logical data. `up` resolves the **project id** from the **project path**, renders one **unit** per service (deriving filenames, `Slice=pctl-<id>.slice`, and any **logical suffix** state/runtime dirs from the id), and writes them into **user.control** along with a **drop-in** per unit carrying **PCTL_ID** and (for services) **PCTL_HOST**."
+> **Domain expert:** "`mkProject` reads your **spec** and emits a **spec file** — a single `spec.json` blob (writeText derivation) holding per-service configs as pure logical data. `up` resolves the **project id** from the **project path**, renders one **unit** per service (deriving filenames, `Slice=pctl-<id>.slice`, and any **logical suffix** state/runtime dirs from the id), and writes them into **user.control** along with a **drop-in** per unit carrying **PCTL_ID** and (for services) **PCTL_HOST**."
 
 > **Dev:** "So the **slice** only gets **PCTL_ID**, not **PCTL_HOST**?"
 
@@ -112,7 +111,7 @@ _Three layers in [`test/unit/`](./test/unit), [`test/integration/`](./test/integ
 
 > **Dev:** "And **reload** — what changes when I edit one service's command?"
 
-> **Domain expert:** "The new **store tree** produces a new **manifest**. Diffing against the stored **manifest** yields a **plan**: the changed service gets a `~` action, everything else `=`. `reload` runs `systemctl restart` on the `~` units only — the **slice** never bounces."
+> **Domain expert:** "The new **spec file** produces a new **manifest**. Diffing against the stored **manifest** yields a **plan**: the changed service gets a `~` action, everything else `=`. `reload` runs `systemctl restart` on the `~` units only — the **slice** never bounces."
 
 > **Dev:** "What if I have two **worktrees** of the same repo checked out?"
 
@@ -120,7 +119,7 @@ _Three layers in [`test/unit/`](./test/unit), [`test/integration/`](./test/integ
 
 ## Flagged ambiguities
 
-- **"Tree"** in conversation sometimes means "store tree" and sometimes the abstract set of rendered units at any pipeline stage. Canonical term is **Store tree** when referring to the on-disk `/nix/store` output; avoid bare "tree" in code comments and docs.
+- **"Tree"** in conversation historically meant `mkProject`'s `/nix/store` output. Since the OCaml rewrite, `mkProject` is a `writeText` derivation whose outpath IS the `spec.json` file — no directory. Canonical term is **Spec file**; avoid "store tree", "tree", "bundle" in code comments and docs.
 - **"Unit"** in systemd vocabulary covers services, slices, targets, sockets, timers, etc. In pctl we only emit **Slice** and **Service** units — when the distinction matters, use the specific noun; use **Unit** only for the union.
 - **"Host"** is overloaded: the machine running pctl vs. the allocated `127.0.0.N`. In pctl code and docs, **Host** always means the allocated loopback address; for the machine, use "host system" or "dev host".
 - **"Registry"** might suggest an OCI or Nix flake registry. Here it's strictly the per-project state directory under `$XDG_RUNTIME_DIR/pctl/projects/`. Consider renaming later if the term confuses users.
