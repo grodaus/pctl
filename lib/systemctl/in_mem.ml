@@ -29,6 +29,9 @@ type t = {
   states : (string, Schema.state) Hashtbl.t;
   subscribers : (string, subscriber list ref) Hashtbl.t;
   fail_next : (string, unit) Hashtbl.t;
+  fail_next_stop : (string, string) Hashtbl.t;
+      (* unit → reason for next stop_unit. One-shot: the entry is
+         removed on fire so repeated calls don't keep raising. *)
 }
 
 let connect ~sw env =
@@ -38,6 +41,7 @@ let connect ~sw env =
     states = Hashtbl.create 16;
     subscribers = Hashtbl.create 16;
     fail_next = Hashtbl.create 4;
+    fail_next_stop = Hashtbl.create 4;
   }
 
 let subscribers_for t u =
@@ -95,6 +99,13 @@ let start_unit t ~unit:u =
       set_state t u terminal
 
 let stop_unit t ~unit:u =
+  (match Hashtbl.find_opt t.fail_next_stop u with
+   | None -> ()
+   | Some reason ->
+       Hashtbl.remove t.fail_next_stop u;
+       raise
+         (Schema.Pctl_error
+            (Schema.Unit_op_failed { op = "stop"; unit_ = u; reply = reason })));
   let cur = current_state t u in
   match cur with
   | Inactive | Failed -> ()
@@ -136,6 +147,9 @@ let subscribe_unit_changes t ~unit:u cb =
 (* ---- test-only APIs -------------------------------------------- *)
 
 let fail_next_start t ~unit:u = Hashtbl.replace t.fail_next u ()
+
+let fail_next_stop t ~unit:u ~reason =
+  Hashtbl.replace t.fail_next_stop u reason
 
 let push_state t ~unit:u state = set_state t u state
 

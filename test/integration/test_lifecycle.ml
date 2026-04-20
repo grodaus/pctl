@@ -15,14 +15,14 @@ let project_path = Schema.Project_path.of_raw "/tmp/pctl-lifecycle-test"
 
 let ctx : Lifecycle.ctx = { id; host; project_path }
 
-let svc_simple name : Schema.service_spec =
+let svc_simple ?(exec_start = "/bin/true") name : Schema.service_spec =
   {
     name;
     kind = Schema.Simple;
     depends_on = [];
     workspace = { cwd = false; writable = false };
     probe = None;
-    service_config = [ ("ExecStart", "/bin/true"); ("Type", "simple") ];
+    service_config = [ ("ExecStart", exec_start); ("Type", "simple") ];
   }
 
 let spec_of_services (svcs : Schema.service_spec list) : Schema.spec =
@@ -148,6 +148,69 @@ let test_reload_dropin_only_change () =
          && r.action = Schema.Unchanged)
        other)
 
+let test_reload_one_service_changed () =
+  with_sandbox @@ fun ~sw:_ ~conn ~handle ~us ->
+  let s1 = spec_of_services [ svc_simple "web"; svc_simple "db" ] in
+  let _ = L.up ~conn ~handle ~unit_store:us ~ctx ~spec:s1 () in
+  let s2 =
+    spec_of_services
+      [ svc_simple ~exec_start:"/bin/true --changed" "web"; svc_simple "db" ]
+  in
+  let r = L.reload ~conn ~handle ~unit_store:us ~ctx ~spec:(Some s2) () in
+  let changed =
+    List.filter (fun (r : Schema.plan_row) -> r.action = Schema.Changed) r.diff
+  in
+  Alcotest.(check int) "exactly one Changed row" 1 (List.length changed);
+  let unchanged =
+    List.filter
+      (fun (r : Schema.plan_row) -> r.action = Schema.Unchanged)
+      r.diff
+  in
+  Alcotest.(check int) "two Unchanged rows (slice + db)" 2
+    (List.length unchanged);
+  Alcotest.(check bool)
+    "web is the Changed one" true
+    (List.exists
+       (fun (row : Schema.plan_row) ->
+         Schema.Unit_filename.equal row.unit_ (service_unit "web"))
+       changed)
+
+let test_down_tolerates_stop_failure () =
+  with_sandbox @@ fun ~sw:_ ~conn ~handle ~us ->
+  let s = spec_of_services [ svc_simple "web" ] in
+  let _ = L.up ~conn ~handle ~unit_store:us ~ctx ~spec:s () in
+  (* Arm the slice stop to raise. Lifecycle.down's [try … with
+     Pctl_error] must swallow it; down proceeds to remove files and
+     clear state. *)
+  let slice_s = Schema.Unit_filename.to_string slice_unit in
+  Systemctl.In_mem.fail_next_stop handle ~unit:slice_s
+    ~reason:"injected: dbus unavailable";
+  let r = L.down ~conn ~handle ~unit_store:us ~ctx () in
+  Alcotest.(check int) "down still cleared manifest" 0 r.units_on_disk;
+  Alcotest.(check int)
+    "store empty despite failure" 0
+    (List.length (Unit_store.In_mem.list us))
+
+let test_up_fail_next_write () =
+  with_sandbox @@ fun ~sw:_ ~conn ~handle ~us ->
+  Unit_store.In_mem.fail_next_write us ~reason:"injected disk-full";
+  let s = spec_of_services [ svc_simple "web" ] in
+  let raised =
+    try
+      let _ = L.up ~conn ~handle ~unit_store:us ~ctx ~spec:s () in
+      false
+    with Schema.Pctl_error (Schema.Install_failed _) -> true
+  in
+  Alcotest.(check bool) "up raised Install_failed" true raised;
+  let stored =
+    State.Projects.load_manifest conn
+      ~project_id:(Schema.Project_id.to_string id)
+  in
+  Alcotest.(check int) "no partial manifest persisted" 0 (List.length stored);
+  Alcotest.(check int)
+    "unit_store still empty" 0
+    (List.length (Unit_store.In_mem.list us))
+
 let test_down_after_up () =
   with_sandbox @@ fun ~sw:_ ~conn ~handle ~us ->
   let s = spec_of_services [ svc_simple "web" ] in
@@ -175,8 +238,14 @@ let () =
         [
           Alcotest.test_case "up fresh" `Quick test_up_fresh;
           Alcotest.test_case "up idempotent" `Quick test_up_idempotent;
+          Alcotest.test_case "reload one service Changed" `Quick
+            test_reload_one_service_changed;
           Alcotest.test_case "reload drop-in only change" `Quick
             test_reload_dropin_only_change;
           Alcotest.test_case "down after up" `Quick test_down_after_up;
+          Alcotest.test_case "down tolerates stop failure" `Quick
+            test_down_tolerates_stop_failure;
+          Alcotest.test_case "up fail_next_write → Install_failed" `Quick
+            test_up_fail_next_write;
         ] );
     ]
