@@ -53,7 +53,8 @@ let () =
               bash bash);
        ]
    @@ fun scratch ->
-   (* pctl up --no-block so `fail` doesn't short-circuit Plan.apply. *)
+   (* pctl up --no-block so `fail` doesn't short-circuit the apply pass
+      inside Lifecycle.reload. *)
    let _ = Harness.up_no_block ~scratch in
    let t0 = Unix.gettimeofday () in
    let rc, out = Harness.results ~scratch ~timeout:10 () in

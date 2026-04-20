@@ -12,6 +12,14 @@ updated: 2026-04-19
 **Created:** 2026-04-19
 **Status:** Draft — decisions locked (Q1–Q14 resolved). Ready for Phase 0.
 
+> **2026-04-20 follow-up (issue #4 RFC):** The `Install.write_units` /
+> `Plan.apply` / `Projects.diff_manifest` chain described below has been
+> consolidated into `lib/lifecycle/` parameterised by the
+> `Unit_store` port (`lib/unit_store/`). Post-rewrite limitation #1
+> (drop-in-only changes silently skipped the reload diff) is now fixed
+> by hashing `main || 0x00 || dropin_or_empty` in the manifest. See
+> commits `e31784b..8aa6656`.
+
 ## Context
 
 Current `pctl` is a Nushell PoC (<1 day old) that validated the core idea: declarative Nix specs → `systemd --user` units with per-project host/slice isolation. The sole consumer today is [grodaus/tuor](../../../tuor/flake.nix), which exercises:

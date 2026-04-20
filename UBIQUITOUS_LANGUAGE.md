@@ -27,11 +27,11 @@ _Rendered by [`lib/render/`](./lib/render); written to disk by [`lib/install/`](
 | **Spec file**   | The `/nix/store` output of `mkProject`. Because `mkProject` uses `pkgs.writeText`, the outpath IS the `spec.json` file (not a directory). OCaml renders unit files from the spec at install time. Consumed by `up` and `reload`. | Store tree, tree, bundle     |
 | **Drop-in**     | The `pctl-runtime.conf` file pctl writes into `<unit>.d/` carrying **PCTL_ID** (+ **PCTL_HOST** on services)                | Override, extension          |
 | **Manifest**    | `{ unit-filename: sha256 }` snapshot persisted on `up`/`reload`, used as the left side of the next reload diff              | Hash map, lock file          |
-| **User.control**| `$XDG_RUNTIME_DIR/systemd/user.control/` — the live unit directory systemd --user reads                                     | Install dir, runtime dir     |
+| **User.control**| `$XDG_RUNTIME_DIR/systemd/user.control/` — the live unit directory systemd --user reads, owned by `Unit_store.Fs`          | Runtime dir, unit dir        |
 
 ## Identity & allocation
 
-_Derived by [`lib/identity/`](./lib/identity) (project id + host allocation); placeholders substituted in [`lib/render/`](./lib/render) and [`lib/install/`](./lib/install)._
+_Derived by [`lib/identity/`](./lib/identity) (project id + host allocation); unit bytes produced in [`lib/render/`](./lib/render), written to disk by [`lib/unit_store/`](./lib/unit_store) and orchestrated by [`lib/lifecycle/`](./lib/lifecycle)._
 
 | Term             | Definition                                                                                                     | Aliases to avoid       |
 | ---------------- | -------------------------------------------------------------------------------------------------------------- | ---------------------- |
