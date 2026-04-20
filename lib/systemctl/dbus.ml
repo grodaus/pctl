@@ -450,10 +450,23 @@ type t = {
   match_rule_installed : bool ref;
 }
 
+(* Forward ref to [manager_unsubscribe_best_effort]. [close] is defined
+ * here so it can be used by [connect]'s Gc.finaliser, but the method-
+ * call helpers live with the other Manager methods below — same
+ * trick as [safe_unit_state_forward]. *)
+let manager_unsubscribe_forward : (t -> unit) ref = ref (fun _ -> ())
+
 let close t =
   if not !(t.closed) then begin
     t.closed := true;
     t.dispatch_stopped := true;
+    (* Pair with manager_subscribe from install_match_rule_and_fiber.
+     * Only call Unsubscribe if we actually Subscribed — bus may be
+     * torn down by the peer otherwise, and Unsubscribe without a
+     * prior Subscribe is a systemd error. Order: Unsubscribe first
+     * while the bus is still live, then unref slots + bus. *)
+    if !(t.match_rule_installed) && not (C.is_null t.bus) then
+      (try !manager_unsubscribe_forward t with _ -> ());
     List.iter
       (fun s -> ignore (t.ffi.sd_bus_slot_unref s))
       !(t.slots);
@@ -572,6 +585,37 @@ let daemon_reload t =
   in
   check_rc ~op:"Reload" ~unit:"-" ~err rc
 
+(* Manager.Subscribe — tells systemd to start emitting per-unit
+ * PropertiesChanged signals to this bus client. Without this call,
+ * bus-level match rules alone are NOT enough: systemd only broadcasts
+ * unit-level signals to clients that have opted in. On sessions with
+ * no other subscribed client (lingered services, minimal CI runners)
+ * the signal stream is nearly empty — see the subscribe_unit_changes
+ * block comment below. *)
+let manager_subscribe t =
+  with_error @@ fun err ->
+  with_reply @@ fun reply ->
+  let rc =
+    sd_bus_call_method_no_args t.bus systemd1_dest systemd1_path
+      manager_iface "Subscribe" err reply ""
+  in
+  check_rc ~op:"Subscribe" ~unit:"-" ~err rc
+
+(* Manager.Unsubscribe — decrements our ref on the systemd-side
+ * subscriber list. Best-effort: systemd may already have dropped our
+ * connection (e.g. during shutdown); swallowing the error matches
+ * reset_failed_unit's policy. *)
+let manager_unsubscribe_best_effort t =
+  with_error @@ fun err ->
+  with_reply @@ fun reply ->
+  let _rc =
+    sd_bus_call_method_no_args t.bus systemd1_dest systemd1_path
+      manager_iface "Unsubscribe" err reply ""
+  in
+  ()
+
+let () = manager_unsubscribe_forward := manager_unsubscribe_best_effort
+
 (* ResetFailedUnit(s) — clears the `failed` tombstone. Swallows
  * not-loaded/not-failed errors: callers use this best-effort, same as
  * `systemctl --user reset-failed` with a glob that matches nothing. *)
@@ -667,6 +711,12 @@ let () =
  *     `PropertiesChanged` on `org.freedesktop.DBus.Properties`, sender
  *     `org.freedesktop.systemd1`. We do NOT filter by object-path
  *     (which would require sd_bus_path_encode on the unit name).
+ *   - Paired with a [Manager.Subscribe] call — without it, systemd
+ *     only emits per-unit PropertiesChanged to clients that have
+ *     explicitly opted in. A match rule alone will silently match
+ *     zero signals on a session with no other subscribed client
+ *     (lingered services, minimal CI runners). Documented here:
+ *       https://www.freedesktop.org/wiki/Software/systemd/dbus/
  *   - The C trampoline handler runs under the background dispatch
  *     fiber. It iterates all registered subscribers, re-resolves the
  *     unit's current state (GetUnit → ActiveState), and fires each
@@ -725,6 +775,11 @@ let install_match_rule_and_fiber t =
     (t.ffi.sd_bus_add_match t.bus slot_pp match_rule handler C.null);
   let slot = C.( !@ ) slot_pp in
   t.slots := slot :: !(t.slots);
+  (* Opt this client in to per-unit PropertiesChanged broadcasts.
+   * Must happen AFTER the match rule is installed (so we don't miss
+   * early signals) but BEFORE the fiber spawns (the first signal we
+   * care about is typically emitted on the first unit op). *)
+  manager_subscribe t;
   Eio.Fiber.fork ~sw:t.sw (fun () -> dispatch_loop t);
   t.match_rule_installed := true
 
