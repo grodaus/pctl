@@ -40,7 +40,7 @@ let () =
           (* After up(b), opportunistic sweep should have purged project
            * a's row. Listing should not show it. *)
           let rc, out = Harness.list () in
-          Harness.check_rc_zero ~label:"list" rc;
+          Harness.check_rc_zero ~label:"list" (rc, "");
           Harness.assert_not_contains
             ~label:"project a swept from list" out id_a_s;
           (* Slice for a should be stopped. *)

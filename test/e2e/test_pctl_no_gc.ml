@@ -41,7 +41,7 @@ let () =
           Harness.check_rc_zero ~label:"up(b)" (Harness.up ~scratch:b);
           (* PCTL_NO_GC=1 => project a's row should still be around. *)
           let rc, out = Harness.list () in
-          Harness.check_rc_zero ~label:"list" rc;
+          Harness.check_rc_zero ~label:"list" (rc, "");
           Harness.assert_contains ~label:"PCTL_NO_GC=1 preserved project a"
             out id_a_s;
           Printf.printf "test_pctl_no_gc OK — env guard skipped the sweep\n"))

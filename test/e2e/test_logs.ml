@@ -23,6 +23,6 @@ let () =
   (* Give journald a moment to flush the message. *)
   let _ = Unix.select [] [] [] 0.5 in
   let rc, out = Harness.logs ~svc:"logger" ~lines:200 ~scratch () in
-  Harness.check_rc_zero ~label:"logs" rc;
+  Harness.check_rc_zero ~label:"logs" (rc, "");
   Harness.assert_contains ~label:"logs include sentinel" out sentinel;
   Printf.printf "test_logs OK — found sentinel in journal\n"

@@ -7,7 +7,7 @@ let () =
    @@ fun scratch ->
    Harness.check_rc_zero ~label:"up" (Harness.up ~scratch);
    let rc, printed = Harness.host ~scratch in
-   Harness.check_rc_zero ~label:"host" rc;
+   Harness.check_rc_zero ~label:"host" (rc, "");
    let trimmed = String.trim printed in
    let re = Str.regexp "^127\\.0\\.0\\.\\([0-9]+\\)$" in
    if not (Str.string_match re trimmed 0) then

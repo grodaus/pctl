@@ -36,7 +36,7 @@ let () =
         (fun () ->
           Harness.check_rc_zero ~label:"up(b)" (Harness.up ~scratch:b);
           let rc, out = Harness.list () in
-          Harness.check_rc_zero ~label:"list" rc;
+          Harness.check_rc_zero ~label:"list" (rc, "");
           let id_a = Schema.Project_id.to_string (Harness.project_id a) in
           let id_b = Schema.Project_id.to_string (Harness.project_id b) in
           Harness.assert_contains ~label:"list has project a" out id_a;

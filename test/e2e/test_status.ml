@@ -9,10 +9,11 @@ let () =
   Harness.check_rc_zero ~label:"up" (Harness.up ~scratch);
   let id_s = Schema.Project_id.to_string (Harness.project_id scratch) in
   Harness.assert_unit_active (Harness.slice_name id_s);
-  Harness.check_rc_zero ~label:"status (up)" (Harness.status ~scratch ());
+  Harness.check_rc_zero ~label:"status (up)"
+    (Harness.status ~scratch (), "");
   (* Scenario 2: after down, status still returns 0 (Nushell oracle
    * tolerates inactive units). *)
-  let (_ : int) = Harness.down ~scratch in
+  let _ = Harness.down ~scratch in
   Harness.check_rc_zero ~label:"status (after down)"
-    (Harness.status ~scratch ());
+    (Harness.status ~scratch (), "");
   Printf.printf "test_status OK\n"

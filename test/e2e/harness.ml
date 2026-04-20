@@ -261,38 +261,26 @@ let active_enter_ts unit_name =
   let _ = Unix.close_process_in ic in
   s
 
-(* Run `Cli.Pipeline.Prod.up` against a scratch setup. Returns the exit code. *)
-let up ~scratch =
-  Eio_main.run @@ fun env ->
-  Eio.Switch.run @@ fun sw ->
-  Cli.Pipeline.Prod.up ~sw ~env ~tree:scratch.spec_path
-    ~path:scratch.project_dir ()
-
-let up_wait ?(timeout = 30) ~scratch () =
-  Eio_main.run @@ fun env ->
-  Eio.Switch.run @@ fun sw ->
-  Cli.Pipeline.Prod.up ~sw ~env ~tree:scratch.spec_path
-    ~path:scratch.project_dir ~wait:true ~timeout ()
-
-let up_no_block ~scratch =
-  Eio_main.run @@ fun env ->
-  Eio.Switch.run @@ fun sw ->
-  Cli.Pipeline.Prod.up ~sw ~env ~tree:scratch.spec_path
-    ~path:scratch.project_dir ~no_block:true ()
-
-(* Results/host — capture stdout so tests can inspect JSON / the printed
- * host line. Both reuse the project path baked into [scratch]. *)
-
-let with_captured_stdout (f : unit -> 'a) : 'a * string =
-  let tmp = Filename.temp_file "pctl-e2e-stdout" ".log" in
+(* Redirect a stdlib fd (stdout or stderr) into a temp file while [f]
+ * runs; return [f]'s result plus the captured bytes. Used by all the
+ * pctl-wrapper helpers so test failures can include pctl's own
+ * printed context ("probe for service web timed out after 10000 ms",
+ * "systemctl start failed: …") instead of just an exit code.
+ *
+ * fd_kind is [Unix.stdout] or [Unix.stderr]. The corresponding Stdlib
+ * channel is flushed before and after to keep buffered output in the
+ * capture. *)
+let with_captured_fd ~(fd_kind : Unix.file_descr)
+    ~(flush_channel : unit -> unit) (f : unit -> 'a) : 'a * string =
+  let tmp = Filename.temp_file "pctl-e2e-capture" ".log" in
   let fd = Unix.openfile tmp [ Unix.O_WRONLY; Unix.O_TRUNC ] 0o600 in
-  let saved = Unix.dup Unix.stdout in
-  flush Stdlib.stdout;
-  Unix.dup2 fd Unix.stdout;
+  let saved = Unix.dup fd_kind in
+  flush_channel ();
+  Unix.dup2 fd fd_kind;
   Unix.close fd;
   let restore () =
-    flush Stdlib.stdout;
-    Unix.dup2 saved Unix.stdout;
+    flush_channel ();
+    Unix.dup2 saved fd_kind;
     Unix.close saved
   in
   let result =
@@ -311,6 +299,42 @@ let with_captured_stdout (f : unit -> 'a) : 'a * string =
   (try Sys.remove tmp with _ -> ());
   (result, captured)
 
+let with_captured_stdout (f : unit -> 'a) : 'a * string =
+  with_captured_fd ~fd_kind:Unix.stdout
+    ~flush_channel:(fun () -> flush Stdlib.stdout) f
+
+let with_captured_stderr (f : unit -> 'a) : 'a * string =
+  with_captured_fd ~fd_kind:Unix.stderr
+    ~flush_channel:(fun () -> flush Stdlib.stderr) f
+
+(* pctl wrappers.
+ *
+ * Each returns (exit_code, pctl_stderr). pctl.run prints Pctl_error
+ * messages via [prerr_endline] — capturing stderr keeps that context
+ * with the test so a failing [check_rc_zero] can print exactly what
+ * pctl said, not just the numeric bucket. See [check_rc_zero] below. *)
+
+let up ~scratch : int * string =
+  with_captured_stderr (fun () ->
+      Eio_main.run @@ fun env ->
+      Eio.Switch.run @@ fun sw ->
+      Cli.Pipeline.Prod.up ~sw ~env ~tree:scratch.spec_path
+        ~path:scratch.project_dir ())
+
+let up_wait ?(timeout = 30) ~scratch () : int * string =
+  with_captured_stderr (fun () ->
+      Eio_main.run @@ fun env ->
+      Eio.Switch.run @@ fun sw ->
+      Cli.Pipeline.Prod.up ~sw ~env ~tree:scratch.spec_path
+        ~path:scratch.project_dir ~wait:true ~timeout ())
+
+let up_no_block ~scratch : int * string =
+  with_captured_stderr (fun () ->
+      Eio_main.run @@ fun env ->
+      Eio.Switch.run @@ fun sw ->
+      Cli.Pipeline.Prod.up ~sw ~env ~tree:scratch.spec_path
+        ~path:scratch.project_dir ~no_block:true ())
+
 let results ?(timeout = 30) ?(json = false) ~scratch () : int * string =
   with_captured_stdout (fun () ->
       Eio_main.run @@ fun env ->
@@ -323,16 +347,18 @@ let host ~scratch : int * string =
       Eio.Switch.run @@ fun sw ->
       Cli.Host.run ~sw ~env ~path:scratch.project_dir ())
 
-let reload ~scratch =
-  Eio_main.run @@ fun env ->
-  Eio.Switch.run @@ fun sw ->
-  Cli.Pipeline.Prod.reload ~sw ~env ~tree:scratch.spec_path
-    ~path:scratch.project_dir ()
+let reload ~scratch : int * string =
+  with_captured_stderr (fun () ->
+      Eio_main.run @@ fun env ->
+      Eio.Switch.run @@ fun sw ->
+      Cli.Pipeline.Prod.reload ~sw ~env ~tree:scratch.spec_path
+        ~path:scratch.project_dir ())
 
-let down ~scratch =
-  Eio_main.run @@ fun env ->
-  Eio.Switch.run @@ fun sw ->
-  Cli.Pipeline.Prod.down ~sw ~env ~path:scratch.project_dir ()
+let down ~scratch : int * string =
+  with_captured_stderr (fun () ->
+      Eio_main.run @@ fun env ->
+      Eio.Switch.run @@ fun sw ->
+      Cli.Pipeline.Prod.down ~sw ~env ~path:scratch.project_dir ())
 
 (* Helpers for logs / status / list / gc tests. *)
 
@@ -396,8 +422,13 @@ let skip_or_run ~name body =
       exit 0
   | None -> body ()
 
-let check_rc_zero ~label rc =
-  if rc <> 0 then Alcotest.failf "%s exit=%d" label rc
+(* check_rc_zero now takes a (rc, captured_stderr) tuple so failures
+ * can reproduce pctl's own error message in the alcotest output.
+ * Tests that only have a bare int pass [(rc, "")]. *)
+let check_rc_zero ~label (rc, captured) =
+  if rc <> 0 then
+    Alcotest.failf "%s exit=%d\n---- pctl stderr ----\n%s" label rc
+      (if captured = "" then "(empty)" else captured)
 
 let assert_eq_int ~label expected got =
   Alcotest.(check int) label expected got

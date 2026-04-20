@@ -140,7 +140,7 @@ let () =
   @@ fun scratch ->
   Harness.check_rc_zero ~label:"up" (Harness.up ~scratch);
   let rc, out = Harness.results ~scratch ~timeout:10 () in
-  Harness.check_rc_zero ~label:"happy-path results" rc;
+  Harness.check_rc_zero ~label:"happy-path results" (rc, "");
   Harness.assert_contains ~label:"stdout has 'ok'" out "ok";
   Harness.assert_contains ~label:"stdout has 'slow'" out "slow";
   Harness.assert_not_contains ~label:"happy path has no 'failed'" out "failed";
