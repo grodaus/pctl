@@ -391,8 +391,8 @@ type spec = {
 }
 
 (* Canonical filename derivations live in [Unit_filename] above — one
- * source of truth used by Render, Install, and every test/harness that
- * needs the concrete names. *)
+ * source of truth used by Render, Unit_store, Lifecycle, and every
+ * test/harness that needs the concrete names. *)
 
 (* result_row wire format — parsed by tuor's
  * scripts/collect-pctl-artifacts.nu, which only accesses fields by name

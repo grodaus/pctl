@@ -41,9 +41,10 @@ let tmp_dir prefix =
   p
 
 (* Own XDG_* env vars so the test doesn't touch the dev's real state or
- * runtime dirs. [Install] reads XDG_RUNTIME_DIR lazily at Paths module
- * init — we must putenv BEFORE the first [Install.Install.write_units]
- * call. See note in lib/install/install.ml (Paths.user_control). *)
+ * runtime dirs. Pipeline → Lifecycle → Unit_store.Fs reads
+ * XDG_RUNTIME_DIR on [Fs.create], which is called inside with_project
+ * for each pipeline command — so the putenv below must land BEFORE the
+ * first pipeline call. *)
 let with_owned_env f =
   let runtime = tmp_dir "pctl-test-runtime" in
   let state_home = tmp_dir "pctl-test-state" in

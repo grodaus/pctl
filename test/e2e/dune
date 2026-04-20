@@ -18,7 +18,7 @@
  (name e2e_harness)
  (wrapped false)
  (modules harness)
- (libraries schema identity install cli spec state systemctl yojson str
+ (libraries schema identity unit_store cli spec state systemctl yojson str
             eio eio_main eio.unix alcotest unix))
 
 (executables
@@ -32,7 +32,7 @@
           test_results test_host test_up_no_block test_up_no_wait
           test_logs test_status test_list test_gc
           test_gc_explicit test_pctl_no_gc)
- (libraries e2e_harness schema identity install cli state systemctl yojson
+ (libraries e2e_harness schema identity unit_store cli state systemctl yojson
             str eio eio_main eio.unix alcotest unix))
 
 ; IMPORTANT: all tests run against the SAME systemd --user session.

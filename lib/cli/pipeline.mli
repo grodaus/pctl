@@ -5,20 +5,20 @@
  *      runtime columns).
  *   2. opportunistic_sweep before host allocation (else orphan units
  *      occupy a host we're about to allocate).
- *   3. Install.write_units before State.Projects.replace_manifest
- *      (manifest row hashes must match the bytes on disk).
- *   4. replace_manifest before Plan.apply (the diff must reflect the
- *      persisted state, not the in-flight state).
- *   5. Systemctl handle created fresh per Plan/Probe/Gc invocation,
+ *   3. Render → write → hash → diff → apply → persist runs as one
+ *      atomic sequence inside [Lifecycle.reload]; [with_project] only
+ *      resolves the spec + host + metadata and then hands off.
+ *   4. Systemctl handle created fresh per Lifecycle/Probe/Gc invocation,
  *      scoped to an inner Eio.Switch so the dispatch fiber drains
  *      before the outer switch releases.
- *   6. Pctl_error raised internally, caught once by [run] — which
+ *   5. Pctl_error raised internally, caught once by [run] — which
  *      maps it to an exit bucket and renders the error on stderr.
  *
- * Ports & Adapters on the three cross-process edges that hurt the
- * integration story today: Systemctl (Dbus | In_mem), Nix_build
- * (Real | test stub), Clock (Real | Frozen). State.Db, Install, Spec
- * remain in-process — they have no second implementation awaiting. *)
+ * Ports & Adapters on the four cross-process edges that hurt the
+ * integration story today: Systemctl (Dbus | In_mem), Unit_store
+ * (Fs | In_mem), Nix_build (Real | test stub), Clock (Real | Frozen).
+ * State.Db and Spec remain in-process — they have no second
+ * implementation awaiting. *)
 
 module type NIX = Nix_build.S
 

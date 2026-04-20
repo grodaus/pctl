@@ -148,9 +148,19 @@ let project_id (s : scratch) : Schema.project_id =
   Identity.derive ~path:(Schema.Project_path.of_raw s.project_dir)
 
 (* Unit filenames are concrete (pctl-<id>-<svc>.service); tests pass
- * them in directly. No placeholders, no id-substitution needed. *)
+ * them in directly. Path construction routes through [Unit_store.Fs]
+ * so this harness never duplicates the user.control layout. Each
+ * helper builds a fresh Fs handle — it reads XDG_RUNTIME_DIR on
+ * creation, so tests that putenv before calling the helper see the
+ * override. *)
+let unit_path_on_disk ~unit_filename : string =
+  Unit_store.Fs.unit_path (Unit_store.Fs.create ()) ~unit_filename
+
+let dropin_path_on_disk ~unit_filename : string =
+  Unit_store.Fs.dropin_file (Unit_store.Fs.create ()) ~unit_filename
+
 let read_unit ~unit_filename : string option =
-  let p = Install.Paths.unit_path ~unit_filename in
+  let p = unit_path_on_disk ~unit_filename in
   if Sys.file_exists p then
     let ic = open_in p in
     Fun.protect
@@ -161,13 +171,13 @@ let read_unit ~unit_filename : string option =
   else None
 
 let unit_exists ~unit_filename : bool =
-  Sys.file_exists (Install.Paths.unit_path ~unit_filename)
+  Sys.file_exists (unit_path_on_disk ~unit_filename)
 
 let dropin_exists ~unit_filename : bool =
-  Sys.file_exists (Install.Paths.dropin_file ~unit_filename)
+  Sys.file_exists (dropin_path_on_disk ~unit_filename)
 
 let read_dropin ~unit_filename : string =
-  let p = Install.Paths.dropin_file ~unit_filename in
+  let p = dropin_path_on_disk ~unit_filename in
   let ic = open_in p in
   Fun.protect
     ~finally:(fun () -> close_in ic)

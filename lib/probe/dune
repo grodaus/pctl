@@ -7,4 +7,4 @@
 (library
  (name probe)
  (public_name pctl.probe)
- (libraries schema install systemctl eio eio.unix mtime unix))
+ (libraries schema systemctl eio eio.unix mtime unix))
