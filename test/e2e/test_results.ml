@@ -24,6 +24,7 @@ let oneshot name exec_line =
         ("ExecStart", exec_line);
       ];
     workspace = None;
+    depends_on = [];
   }
 
 let simple name exec_line =
@@ -36,6 +37,7 @@ let simple name exec_line =
         ("ExecStart", exec_line);
       ];
     workspace = None;
+    depends_on = [];
   }
 
 let () =

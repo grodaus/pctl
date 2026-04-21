@@ -35,6 +35,7 @@ let () =
               bash bash Harness.sleep_bin );
         ];
       workspace = None;
+      depends_on = [];
     }
   in
   Harness.with_scratch ~services:[ web ]

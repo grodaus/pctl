@@ -24,6 +24,7 @@ let () =
           ("ExecStart", Printf.sprintf "%s infinity" sleep_bin);
         ];
       workspace = None;
+      depends_on = [];
     }
   in
   Harness.with_scratch ~services:[ web ]

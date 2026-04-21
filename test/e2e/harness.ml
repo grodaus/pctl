@@ -76,11 +76,12 @@ type service_fixture = {
   workspace : (bool * bool) option;
       (* (cwd, writable) — None = default false/false *)
   probe : probe_fixture option;
+  depends_on : string list;
 }
 
 let service ?(workspace = None) ?(cfg = default_service_config ())
-    ?(probe = None) name =
-  { name; service_config = cfg; workspace; probe }
+    ?(probe = None) ?(depends_on = []) name =
+  { name; service_config = cfg; workspace; probe; depends_on }
 
 (* Build spec.json JSON from a set of services. Uses Spec's derived
  * yojson so this can't drift from the loader's expectations. *)
@@ -89,7 +90,7 @@ let spec_json ~(services : service_fixture list) : string =
     {
       kind = Schema.Simple;
       service_config = sf.service_config;
-      depends_on = [];
+      depends_on = sf.depends_on;
       workspace =
         (match sf.workspace with
          | None -> { cwd = false; writable = false }

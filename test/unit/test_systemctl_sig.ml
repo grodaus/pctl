@@ -175,6 +175,29 @@ let test_idempotent_start () =
   Alcotest.check states_testable
     "no transitions when already Active" [] (List.rev !obs)
 
+let test_pending_job_set_and_clear () =
+  eio_run @@ fun ~sw ~env ->
+  let sc = In_mem.connect ~sw env in
+  Alcotest.(check bool)
+    "unknown unit has no pending job" false
+    (In_mem.unit_job_pending sc ~unit:"a.service");
+  In_mem.set_pending_job sc ~unit:"a.service";
+  Alcotest.(check bool)
+    "set_pending_job flips the predicate" true
+    (In_mem.unit_job_pending sc ~unit:"a.service");
+  In_mem.clear_pending_job sc ~unit:"a.service";
+  Alcotest.(check bool)
+    "clear_pending_job restores" false
+    (In_mem.unit_job_pending sc ~unit:"a.service");
+  (* start_unit must also clear the marker so tests that simulate
+   * systemd-picks-up-the-job don't have to manually toggle it. *)
+  In_mem.set_pending_job sc ~unit:"a.service";
+  In_mem.start_unit sc ~unit:"a.service";
+  drain env;
+  Alcotest.(check bool)
+    "start_unit clears pending_job" false
+    (In_mem.unit_job_pending sc ~unit:"a.service")
+
 let () =
   Alcotest.run "pctl systemctl/in_mem"
     [
@@ -191,5 +214,7 @@ let () =
           Alcotest.test_case "subscribers_count" `Quick test_subscribers_count;
           Alcotest.test_case "inspect sorted" `Quick test_inspect_sorted;
           Alcotest.test_case "idempotent start" `Quick test_idempotent_start;
+          Alcotest.test_case "pending_job set/clear" `Quick
+            test_pending_job_set_and_clear;
         ] );
     ]

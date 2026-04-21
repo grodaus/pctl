@@ -36,17 +36,36 @@ type strategy = [ `Throw_first | `Collect_all ]
 (* Internal helpers.                                                    *)
 (* ------------------------------------------------------------------ *)
 
-(* Terminal states for the no-probe path. The Nushell oracle treats
- * Active as success; Failed/Inactive as terminal failure; the three
- * transient states (Activating/Deactivating/Reloading) as "keep
- * waiting". See pctl/lib/probe.nu `wait-active-unit`. *)
-let is_terminal_state : Schema.state -> bool = function
-  | Schema.Active | Schema.Failed | Schema.Inactive -> true
-  | Schema.Activating | Schema.Deactivating | Schema.Reloading -> false
+(* State-only classification for the no-probe path.
+ *
+ * [`Terminal]          — unambiguous outcome: Active (success) or
+ *                        Failed (error).
+ * [`Maybe_terminal]    — Inactive. Ambiguous on its own: could be
+ *                        "unit completed and returned to inactive"
+ *                        (terminal) OR "StartUnit queued a job but
+ *                        systemd hasn't run it yet because the unit
+ *                        has Requires= pointing at a still-inactive
+ *                        dep" (NOT terminal). Caller must consult
+ *                        [Systemctl.unit_job_pending] to disambiguate.
+ * [`Wait]              — Activating/Deactivating/Reloading. Never
+ *                        terminal; keep waiting.
+ *
+ * Reference: issue #8 — before depends_on→Requires= was wired (#6),
+ * Inactive could only be a post-run state, so the old
+ * "Inactive = terminal" shortcut was safe. Post-#6, queued units sit
+ * in Inactive until systemd picks up the job, and treating that as
+ * terminal reported services as Inactive in microseconds. *)
+type classify = [ `Terminal | `Maybe_terminal | `Wait ]
 
-(* Terminal systemd state → result state. Only called after
- * [is_terminal_state] returned true, so the transient cases here are
- * unreachable — they map to [`Timed_out] for safety. *)
+let classify_state : Schema.state -> classify = function
+  | Schema.Active | Schema.Failed -> `Terminal
+  | Schema.Inactive -> `Maybe_terminal
+  | Schema.Activating | Schema.Deactivating | Schema.Reloading -> `Wait
+
+(* Terminal systemd state → result state. Called on states that the
+ * caller has already classified as terminal. The transient cases are
+ * unreachable from the caller's branch — they map to [`Timed_out] for
+ * safety. *)
 let state_to_result : Schema.state -> Schema.result_state = function
   | Schema.Active -> `Active
   | Schema.Failed -> `Failed
@@ -131,22 +150,33 @@ module Make (M : Systemctl.S) = struct
    * callback (or by the initial read if it's already terminal).
    * Cancelled externally by the [Fiber.first] wrapper when the
    * deadline fires — that cancellation cancels this fiber before it
-   * returns. *)
+   * returns.
+   *
+   * Inactive needs extra care: see [classify_state] above. An Inactive
+   * reading is terminal ONLY when no start job is pending. While a
+   * dep chain is unresolved, StartUnit leaves the unit at Inactive
+   * with [unit_job_pending = true]; reporting that as terminal would
+   * mark the service done in microseconds (issue #8). *)
   let wait_unit_state (handle : M.t) ~(service_unit : string) : Schema.state =
     let p, u = Eio.Promise.create () in
     let resolved = ref false in
-    let cb (state : Schema.state) =
-      if (not !resolved) && is_terminal_state state then begin
-        resolved := true;
-        Eio.Promise.resolve u state
-      end
+    let try_resolve state =
+      if !resolved then ()
+      else
+        match classify_state state with
+        | `Wait -> ()
+        | `Terminal ->
+            resolved := true;
+            Eio.Promise.resolve u state
+        | `Maybe_terminal ->
+            if not (M.unit_job_pending handle ~unit:service_unit) then begin
+              resolved := true;
+              Eio.Promise.resolve u state
+            end
     in
-    M.subscribe_unit_changes handle ~unit:service_unit cb;
+    M.subscribe_unit_changes handle ~unit:service_unit try_resolve;
     let initial = M.unit_state handle ~unit:service_unit in
-    if is_terminal_state initial && not !resolved then begin
-      resolved := true;
-      Eio.Promise.resolve u initial
-    end;
+    try_resolve initial;
     Eio.Promise.await p
 
   (* ---- Single-service entry point ---------------------------------- *)

@@ -61,22 +61,34 @@ let result_kind_testable =
 (* Pure helpers                                                        *)
 (* ------------------------------------------------------------------ *)
 
-let test_is_terminal_state () =
-  let pairs =
+let classify_testable =
+  Alcotest.testable
+    (fun ppf (c : Probe.classify) ->
+      let s =
+        match c with
+        | `Terminal -> "Terminal"
+        | `Maybe_terminal -> "Maybe_terminal"
+        | `Wait -> "Wait"
+      in
+      Format.pp_print_string ppf s)
+    ( = )
+
+let test_classify_state () =
+  let pairs : (Schema.state * Probe.classify) list =
     [
-      (Schema.Active, true);
-      (Schema.Failed, true);
-      (Schema.Inactive, true);
-      (Schema.Activating, false);
-      (Schema.Deactivating, false);
-      (Schema.Reloading, false);
+      (Schema.Active, `Terminal);
+      (Schema.Failed, `Terminal);
+      (Schema.Inactive, `Maybe_terminal);
+      (Schema.Activating, `Wait);
+      (Schema.Deactivating, `Wait);
+      (Schema.Reloading, `Wait);
     ]
   in
   List.iter
-    (fun (s, expect) ->
-      Alcotest.(check bool)
-        (Printf.sprintf "is_terminal %s" (Schema.state_to_string s))
-        expect (Probe.is_terminal_state s))
+    (fun (s, want) ->
+      Alcotest.check classify_testable
+        (Printf.sprintf "classify %s" (Schema.state_to_string s))
+        want (Probe.classify_state s))
     pairs
 
 let test_state_to_result_matches_terminals () =
@@ -99,8 +111,9 @@ let test_state_to_result_matches_terminals () =
         want (Probe.state_to_result s))
     cases
 
-(* Property: terminal states always map to a result_state that is NOT
- * `Timed_out. Exactly the invariant the caller relies on. *)
+(* Property: any state classified as Terminal maps through state_to_result
+ * to something that is NOT `Timed_out. Pins the invariant the caller
+ * relies on when materialising the result row. *)
 let state_gen : Schema.state QCheck.Gen.t =
   QCheck.Gen.oneof_list
     [
@@ -116,9 +129,11 @@ let state_arb = QCheck.make ~print:Schema.state_to_string state_gen
 
 let prop_terminal_is_concrete =
   QCheck.Test.make ~count:64
-    ~name:"is_terminal ⇒ state_to_result ≠ `Timed_out" state_arb (fun s ->
-      if Probe.is_terminal_state s then Probe.state_to_result s <> `Timed_out
-      else true)
+    ~name:"classify = `Terminal ⇒ state_to_result ≠ `Timed_out" state_arb
+    (fun s ->
+      match Probe.classify_state s with
+      | `Terminal -> Probe.state_to_result s <> `Timed_out
+      | `Maybe_terminal | `Wait -> true)
 
 let test_mono_add_seconds_zero () =
   eio_run @@ fun ~sw:_ ~env ->
@@ -304,6 +319,55 @@ let test_wait_service_timeout () =
     row.state;
   Alcotest.check result_kind_testable "kind = Unit_state" `Unit_state row.kind
 
+(* Regression test for issue #8: a unit sitting at Inactive with a
+ * pending start job (systemd hasn't picked it up yet — typically
+ * because Requires= is waiting on a dep) must NOT be reported as
+ * terminal-Inactive. wait_unit_state has to keep waiting until the job
+ * clears and a real terminal state arrives. *)
+let test_wait_service_queued_inactive_waits_for_active () =
+  eio_run @@ fun ~sw ~env ->
+  let sc = In_mem.connect ~sw env in
+  let svc = svc_no_probe "web" in
+  let unit_name = service_unit "web" in
+  (* Simulate systemd's state after StartUnit has queued the job but the
+     dep chain hasn't resolved: state=Inactive, job pending. *)
+  In_mem.push_state sc ~unit:unit_name Schema.Inactive;
+  In_mem.set_pending_job sc ~unit:unit_name;
+  (* Fork a fiber that, after a brief delay, flips the unit to Active —
+     mirrors systemd picking up the queued job once Requires= clears. *)
+  Eio.Fiber.fork ~sw (fun () ->
+      Eio.Time.sleep
+        (env#clock :> float Eio.Time.clock_ty Eio.Std.r)
+        0.02;
+      In_mem.clear_pending_job sc ~unit:unit_name;
+      In_mem.push_state sc ~unit:unit_name Schema.Active);
+  let deadline = mono_now_plus ~seconds:5 env in
+  let row =
+    P.wait_service ~sw ~env ~handle:sc ~id ~host ~service_name:"web"
+      ~service:svc ~overall_deadline_mono:deadline
+  in
+  Alcotest.check result_state_testable "state = Active (waited past queue)"
+    `Active row.state;
+  Alcotest.(check bool)
+    "elapsed ≫ 1ms (not the microsecond false-terminal)" true
+    (Int64.compare row.elapsed 1_000_000L > 0)
+
+(* Flip side: when there is no pending job and the unit is genuinely
+ * Inactive (e.g. a oneshot that completed between StartUnit and probe),
+ * the initial read must resolve immediately — no extra latency. *)
+let test_wait_service_inactive_no_job_is_terminal () =
+  eio_run @@ fun ~sw ~env ->
+  let sc = In_mem.connect ~sw env in
+  let svc = svc_no_probe "web" in
+  In_mem.push_state sc ~unit:(service_unit "web") Schema.Inactive;
+  let deadline = mono_now_plus ~seconds:5 env in
+  let row =
+    P.wait_service ~sw ~env ~handle:sc ~id ~host ~service_name:"web"
+      ~service:svc ~overall_deadline_mono:deadline
+  in
+  Alcotest.check result_state_testable "state = Inactive (terminal)"
+    `Inactive row.state
+
 (* ------------------------------------------------------------------ *)
 (* Functor — wait_all ordering + Throw_first cancellation               *)
 (* ------------------------------------------------------------------ *)
@@ -356,7 +420,7 @@ let () =
     [
       ( "pure helpers",
         [
-          Alcotest.test_case "is_terminal_state" `Quick test_is_terminal_state;
+          Alcotest.test_case "classify_state" `Quick test_classify_state;
           Alcotest.test_case "state_to_result map" `Quick
             test_state_to_result_matches_terminals;
           Alcotest.test_case "mono_add_seconds 0" `Quick
@@ -389,6 +453,10 @@ let () =
           Alcotest.test_case "unit Failed" `Quick test_wait_service_failed;
           Alcotest.test_case "deadline-past timeout" `Quick
             test_wait_service_timeout;
+          Alcotest.test_case "queued Inactive waits for Active (#8)" `Quick
+            test_wait_service_queued_inactive_waits_for_active;
+          Alcotest.test_case "Inactive without pending job is terminal" `Quick
+            test_wait_service_inactive_no_job_is_terminal;
         ] );
       ( "wait_all",
         [

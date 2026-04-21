@@ -32,6 +32,12 @@ type t = {
   fail_next_stop : (string, string) Hashtbl.t;
       (* unit → reason for next stop_unit. One-shot: the entry is
          removed on fire so repeated calls don't keep raising. *)
+  pending_jobs : (string, unit) Hashtbl.t;
+      (* unit → pending start-job marker. Test fixtures toggle this to
+         model systemd's behaviour on units with Requires=: StartUnit
+         queues a job, leaving the unit Inactive until the dep chain
+         clears. Cleared automatically when [start_unit]'s transition
+         drops the unit into Active/Failed. *)
 }
 
 let connect ~sw env =
@@ -42,6 +48,7 @@ let connect ~sw env =
     subscribers = Hashtbl.create 16;
     fail_next = Hashtbl.create 4;
     fail_next_stop = Hashtbl.create 4;
+    pending_jobs = Hashtbl.create 4;
   }
 
 let subscribers_for t u =
@@ -89,6 +96,7 @@ let start_unit t ~unit:u =
   | Reloading -> () (* treat as no-op, systemd would too *)
   | Inactive | Failed | Deactivating ->
       set_state t u Activating;
+      Hashtbl.remove t.pending_jobs u;
       sleep t;
       let terminal =
         if Hashtbl.mem t.fail_next u then (
@@ -140,6 +148,8 @@ let reset_failed_unit t ~unit:u =
 
 let unit_state t ~unit:u = current_state t u
 
+let unit_job_pending t ~unit:u = Hashtbl.mem t.pending_jobs u
+
 let subscribe_unit_changes t ~unit:u cb =
   let r = subscribers_for t u in
   r := cb :: !r
@@ -152,6 +162,15 @@ let fail_next_stop t ~unit:u ~reason =
   Hashtbl.replace t.fail_next_stop u reason
 
 let push_state t ~unit:u state = set_state t u state
+
+(* Test-only: mark a unit as having a pending start-job (Inactive +
+ * Requires= blocked on a dep). Clears once the unit actually starts
+ * transitioning (set by [start_unit]) — callers that want to leave the
+ * unit wedged must not invoke [start_unit] between [set_pending_job]
+ * and the observation. *)
+let set_pending_job t ~unit:u = Hashtbl.replace t.pending_jobs u ()
+
+let clear_pending_job t ~unit:u = Hashtbl.remove t.pending_jobs u
 
 let inspect t =
   Hashtbl.fold (fun u s acc -> (u, s) :: acc) t.states []

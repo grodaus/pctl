@@ -32,6 +32,7 @@ let () =
         ];
       workspace = None;
       probe = None;
+      depends_on = [];
     }
   in
   let new_spec =

@@ -145,6 +145,7 @@ module Ffi = struct
       int) ->
       unit C.ptr ->
       int;
+    sd_bus_message_read_basic : sd_bus_message -> char -> unit C.ptr -> int;
   }
 
   let build () : t =
@@ -174,6 +175,9 @@ module Ffi = struct
           C.(
             sd_bus @-> ptr sd_bus_slot @-> string
             @-> sd_bus_message_handler_t @-> ptr void @-> returning int);
+      sd_bus_message_read_basic =
+        foreign "sd_bus_message_read_basic"
+          C.(sd_bus_message @-> char @-> ptr void @-> returning int);
     }
 
   let cache : t option ref = ref None
@@ -266,6 +270,17 @@ let sd_bus_message_read_o =
 
 (* Read a simple string from a message (types = "s"). *)
 let sd_bus_message_read_s =
+  foreign "sd_bus_message_read"
+    C.(
+      sd_bus_message
+      @-> string
+      @-> ptr (ptr_opt char)
+      @-> returning int)
+
+(* Same shape as [sd_bus_message_read_s], but for an object path (types = "o").
+ * The sd-bus wire format is a length-prefixed string either way, but the
+ * libsystemd reader is strict about the type code matching the container. *)
+let sd_bus_message_read_o_ptr =
   foreign "sd_bus_message_read"
     C.(
       sd_bus_message
@@ -678,6 +693,55 @@ let unit_state t ~unit:u =
   | Some path ->
       let s = read_active_state t ~unit:u ~path in
       state_of_active_string ~unit:u s
+
+(* Properties.Get(unit_iface, "Job") on the unit path. The property type
+ * is (u,o) — a struct of (jobId, objectPath). systemd sets the path to
+ * "/" when no job is pending; otherwise it points at the queued
+ * transaction's object path. We only care about the path.
+ *
+ * Wire encoding: the reply is v<struct<u,o>>. Enter the v, enter the
+ * struct, skip the u (JobId), read the o, exit both. *)
+let read_job_path t ~unit:u ~path =
+  with_error @@ fun err ->
+  with_reply @@ fun reply ->
+  let rc =
+    sd_bus_call_method_ss t.bus systemd1_dest path props_iface "Get" err
+      reply "ss" unit_iface "Job"
+  in
+  check_rc ~op:"Properties.Get(Job)" ~unit:u ~err rc;
+  let reply_msg = C.( !@ ) reply in
+  fail_on_neg_rc ~op:"Job/enter_variant" ~unit:u
+    (sd_bus_message_enter_container reply_msg 'v' "(uo)");
+  fail_on_neg_rc ~op:"Job/enter_struct" ~unit:u
+    (sd_bus_message_enter_container reply_msg 'r' "uo");
+  (* Skip the u (jobId) via read_basic — the u32 payload never makes it
+   * back to the caller; we only care about the object path. *)
+  let u32 = C.allocate C.uint32_t Unsigned.UInt32.zero in
+  fail_on_neg_rc ~op:"Job/read_u" ~unit:u
+    (t.ffi.sd_bus_message_read_basic reply_msg 'u' (C.to_voidp u32));
+  let path_s =
+    read_cstring_out (fun out ->
+        fail_on_neg_rc ~op:"Job/read_o" ~unit:u
+          (sd_bus_message_read_o_ptr reply_msg "o" out))
+  in
+  let _ = sd_bus_message_exit_container reply_msg in
+  let _ = sd_bus_message_exit_container reply_msg in
+  path_s
+
+let unit_job_pending t ~unit:u =
+  (* Same NoSuchUnit tolerance as [unit_state]: an unloaded unit has no
+   * pending job. Any Pctl_error during the property read falls back to
+   * "no pending job" — we'd rather fail-fast on state than hang on a
+   * transient read error. *)
+  match
+    try Some (get_unit_path t ~unit:u) with Schema.Pctl_error _ -> None
+  with
+  | None -> false
+  | Some path ->
+      (try
+         let job_path = read_job_path t ~unit:u ~path in
+         job_path <> "/"
+       with Schema.Pctl_error _ -> false)
 
 (* Wire the forward reference so the signal handler can re-read state
  * without a dependency cycle. *)

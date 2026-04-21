@@ -24,6 +24,7 @@ let () =
             ];
           workspace = Some (true, true);
           probe = None;
+          depends_on = [];
         }
       in
       [ writer ])
