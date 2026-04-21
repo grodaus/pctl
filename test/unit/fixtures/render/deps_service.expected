@@ -1,0 +1,9 @@
+[Unit]
+Description=pctl service server for demo_abc12345
+Requires=pctl-demo_abc12345-pg.service pctl-demo_abc12345-migrate.service
+After=pctl-demo_abc12345-pg.service pctl-demo_abc12345-migrate.service
+
+[Service]
+ExecStart=/bin/server
+Type=simple
+Slice=pctl-demo_abc12345.slice

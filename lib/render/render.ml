@@ -97,13 +97,26 @@ let service ~(service : service_spec) ~(id : project_id)
   let sc = service.service_config in
   (* User-supplied Description wins over our generated default. *)
   let user_description = List.assoc_opt "Description" sc in
-  let unit_kvs =
-    [
-      ( "Description",
-        Option.value user_description
-          ~default:(description_for ~service_name:service.name ~id) );
-    ]
+  let description_kv =
+    ( "Description",
+      Option.value user_description
+        ~default:(description_for ~service_name:service.name ~id) )
   in
+  let dep_kvs =
+    match service.depends_on with
+    | [] -> []
+    | deps ->
+        let joined =
+          List.map
+            (fun dep ->
+              Schema.Unit_filename.to_string
+                (Schema.Unit_filename.service ~id ~service:dep))
+            deps
+          |> String.concat " "
+        in
+        [ ("Requires", joined); ("After", joined) ]
+  in
+  let unit_kvs = description_kv :: dep_kvs in
   (* service_config without Description (we emit that in [Unit]), plus:
    *   - Slice=pctl-<id>.slice so the service is tied to its project slice;
    *   - workspace-derived keys (WorkingDirectory/BindPaths/ProtectHome).

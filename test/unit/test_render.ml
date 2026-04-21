@@ -60,6 +60,26 @@ let test_render_service_with_workspace () =
   in
   Alcotest.(check string) "workspace + user description golden" expected got
 
+let test_render_service_with_deps () =
+  let svc =
+    {
+      name = "server";
+      kind = Simple;
+      depends_on = [ "pg"; "migrate" ];
+      workspace = { cwd = false; writable = false };
+      probe = None;
+      service_config = [ ("ExecStart", "/bin/server"); ("Type", "simple") ];
+    }
+  in
+  let got =
+    Render.service ~service:svc ~id:id_demo
+      ~project_path:(Schema.Project_path.of_raw "/home/me/project")
+  in
+  let expected =
+    Test_helpers.read_file (Test_helpers.render_fixture "deps_service.expected")
+  in
+  Alcotest.(check string) "depends_on → Requires/After golden" expected got
+
 let test_render_slice () =
   let slc =
     { slice_config = [ ("CPUWeight", "100"); ("MemoryMax", "4G") ] }
@@ -79,6 +99,8 @@ let () =
           test_case "service golden (simple)" `Quick test_render_simple_service;
           test_case "service golden (workspace + user description)" `Quick
             test_render_service_with_workspace;
+          test_case "service golden (depends_on)" `Quick
+            test_render_service_with_deps;
           test_case "slice golden" `Quick test_render_slice;
         ] );
     ]
