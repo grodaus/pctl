@@ -53,7 +53,7 @@
         # docs/src/plans/20260419-ocaml-rewrite.md.
         pctlPkg = ocamlPackages.buildDunePackage {
           pname = "pctl";
-          version = "0.0.1";
+          version = "0.1.0";
           duneVersion = "3";
           src = ./.;
 
