@@ -58,11 +58,8 @@ let rec rm_rf p =
  * No `@@PROJECT@@` placeholders — spec.json v2 is pure logical data. *)
 let sleep_bin = "/run/current-system/sw/bin/sleep"
 
-let default_service_config () =
-  [
-    ("Type", "simple");
-    ("ExecStart", Printf.sprintf "%s infinity" sleep_bin);
-  ]
+let default_command () = [ sleep_bin; "infinity" ]
+let default_service_config () = [ ("Type", "simple") ]
 
 type probe_fixture = {
   exec : string list;
@@ -72,6 +69,7 @@ type probe_fixture = {
 
 type service_fixture = {
   name : string;
+  command : string list;  (* argv → ExecStart, rendered OCaml-side *)
   service_config : (string * string) list;
   workspace : (bool * bool) option;
       (* (cwd, writable) — None = default false/false *)
@@ -79,9 +77,9 @@ type service_fixture = {
   depends_on : string list;
 }
 
-let service ?(workspace = None) ?(cfg = default_service_config ())
-    ?(probe = None) ?(depends_on = []) name =
-  { name; service_config = cfg; workspace; probe; depends_on }
+let service ?(workspace = None) ?(command = default_command ())
+    ?(cfg = default_service_config ()) ?(probe = None) ?(depends_on = []) name =
+  { name; command; service_config = cfg; workspace; probe; depends_on }
 
 (* Build spec.json JSON from a set of services. Uses Spec's derived
  * yojson so this can't drift from the loader's expectations. *)
@@ -89,6 +87,7 @@ let spec_json ~(services : service_fixture list) : string =
   let service_to_json (sf : service_fixture) : Spec.service_json =
     {
       kind = Schema.Simple;
+      command = sf.command;
       service_config = sf.service_config;
       depends_on = sf.depends_on;
       workspace =

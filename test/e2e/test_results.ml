@@ -13,29 +13,22 @@ let bash = "/run/current-system/sw/bin/bash"
 let true_bin = "/run/current-system/sw/bin/true"
 let false_bin = "/run/current-system/sw/bin/false"
 
-let oneshot name exec_line =
+let oneshot name command =
   {
     Harness.name;
     probe = None;
-    service_config =
-      [
-        ("Type", "oneshot");
-        ("RemainAfterExit", "yes");
-        ("ExecStart", exec_line);
-      ];
+    command;
+    service_config = [ ("Type", "oneshot"); ("RemainAfterExit", "yes") ];
     workspace = None;
     depends_on = [];
   }
 
-let simple name exec_line =
+let simple name command =
   {
     Harness.name;
     probe = None;
-    service_config =
-      [
-        ("Type", "simple");
-        ("ExecStart", exec_line);
-      ];
+    command;
+    service_config = [ ("Type", "simple") ];
     workspace = None;
     depends_on = [];
   }
@@ -46,13 +39,16 @@ let () =
   (Harness.with_scratch
      ~services:
        [
-         oneshot "ok" true_bin;
-         oneshot "fail" false_bin;
+         oneshot "ok" [ true_bin ];
+         oneshot "fail" [ false_bin ];
          simple "slow"
-           (Printf.sprintf
-              "%s -c '%s 0.5; exec %s -c \"while true; do %s 3600; \
-               done\"'"
-              bash Harness.sleep_bin bash Harness.sleep_bin);
+           [
+             bash;
+             "-c";
+             Printf.sprintf
+               "%s 0.5; exec %s -c \"while true; do %s 3600; done\""
+               Harness.sleep_bin bash Harness.sleep_bin;
+           ];
        ]
    @@ fun scratch ->
    (* pctl up --no-block so `fail` doesn't short-circuit the apply pass
@@ -132,12 +128,15 @@ let () =
   Harness.with_scratch
     ~services:
       [
-        oneshot "ok" true_bin;
+        oneshot "ok" [ true_bin ];
         simple "slow"
-          (Printf.sprintf
-             "%s -c '%s 0.5; exec %s -c \"while true; do %s 3600; \
-              done\"'"
-             bash Harness.sleep_bin bash Harness.sleep_bin);
+          [
+            bash;
+            "-c";
+            Printf.sprintf
+              "%s 0.5; exec %s -c \"while true; do %s 3600; done\""
+              Harness.sleep_bin bash Harness.sleep_bin;
+          ];
       ]
   @@ fun scratch ->
   Harness.check_rc_zero ~label:"up" (Harness.up ~scratch);

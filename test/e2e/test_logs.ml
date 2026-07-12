@@ -6,16 +6,16 @@
 let () =
   Harness.skip_or_run ~name:"test_logs" @@ fun () ->
   let sentinel = "pctl-e2e-logs-sentinel" in
-  let cfg =
+  let command =
     [
-      ("Type", "simple");
-      ( "ExecStart",
-        Printf.sprintf
-          "/run/current-system/sw/bin/sh -c 'echo %s; exec /run/current-system/sw/bin/sleep infinity'"
-          sentinel );
+      "/run/current-system/sw/bin/sh";
+      "-c";
+      Printf.sprintf
+        "echo %s; exec /run/current-system/sw/bin/sleep infinity" sentinel;
     ]
   in
-  Harness.with_scratch ~services:[ Harness.service ~cfg "logger" ]
+  Harness.with_scratch
+    ~services:[ Harness.service ~command ~cfg:[ ("Type", "simple") ] "logger" ]
   @@ fun scratch ->
   Harness.check_rc_zero ~label:"up" (Harness.up ~scratch);
   let id_s = Schema.Project_id.to_string (Harness.project_id scratch) in

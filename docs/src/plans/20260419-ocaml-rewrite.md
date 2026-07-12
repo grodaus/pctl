@@ -123,11 +123,11 @@ services.<name> = {
   "services": {
     "pg": {
       "kind": "simple",
+      "command": ["/nix/store/.../bin/postgres", "-D", "/var/lib/pg"],
       "depends_on": [],
       "workspace": { "cwd": true, "writable": true },
       "probe": { "exec": [...], "period_seconds": 1, "timeout_seconds": 30 },
       "service_config": {
-        "ExecStart": "/nix/store/.../bin/postgres",
         "Type": "simple",
         "Restart": "on-failure",
         "StateDirectory": "pg",
@@ -138,7 +138,7 @@ services.<name> = {
 }
 ```
 
-OCaml rejects any `version` other than 2 (v1 was the placeholder-carrying predecessor; it's now unsupported). `service_config` is fully merged by Nix (command → ExecStart, env → Environment=, limits → MemoryMax, user's explicit serviceConfig layered on top, sandbox-defaults filling unspecified hardening). OCaml treats `service_config` as `string → string` — renders ini, applies per-project id prefix to known runtime-dir keys, writes.
+OCaml rejects any `version` other than 2 (v1 was the placeholder-carrying predecessor; it's now unsupported). `command` is carried as a JSON list (argv); OCaml renders it into the `ExecStart=` line with systemd-correct quoting (embedded spaces are double-quoted, `\`/`"` escaped, `%` doubled), so argument boundaries survive — a newline in any element is rejected at load (and at `nix build`) since it would split the unit directive. `service_config` is merged by Nix (env → Environment=, limits → MemoryMax, user's explicit serviceConfig layered on top, sandbox-defaults filling unspecified hardening) and no longer carries ExecStart. OCaml treats `service_config` as `string → string` — renders ini, applies per-project id prefix to known runtime-dir keys, writes.
 
 Filenames are derived by OCaml — `pctl-<project id>.slice`, `pctl-<project id>-<service name>.service`. `StateDirectory` / `RuntimeDirectory` / `CacheDirectory` / `LogsDirectory` / `ConfigurationDirectory` values the user writes as logical suffixes (`"pg"`, `"server"`) are rendered as `pctl-<project id>-<suffix>` so distinct projects don't collide under `/var/lib` / `/run` etc. Workspace-derived keys (`WorkingDirectory`, `BindPaths`, `ProtectHome=tmpfs`) are produced by the OCaml renderer from `workspace.cwd` / `workspace.writable`, not by Nix.
 

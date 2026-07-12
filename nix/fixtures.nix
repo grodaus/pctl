@@ -5,14 +5,14 @@
 # Usage (from flake root):
 #
 #   nix build --no-link --print-out-paths \
-#     '.#fixtures.single' '.#fixtures.multi' \
-#     '.#fixtures.probe'  '.#fixtures.workspace'
+#     '.#fixtures-single' '.#fixtures-multi' \
+#     '.#fixtures-probe'  '.#fixtures-workspace'
 #
 # Each output is the `pkgs.writeText` derivation produced by mkProject;
 # its outPath IS the spec.json file. Regenerate into the fixtures dir:
 #
 #   for n in single multi probe workspace; do
-#     install -m 644 $(nix build --no-link --print-out-paths ".#fixtures.$n") \
+#     install -m 644 $(nix build --no-link --print-out-paths ".#fixtures-$n" 2>/dev/null) \
 #       "test/unit/fixtures/spec/$n.json"
 #   done
 #

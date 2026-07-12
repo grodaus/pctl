@@ -74,6 +74,7 @@ type workspace_json = {
 type service_json = {
   kind : kind;
       [@to_yojson kind_to_yojson] [@of_yojson kind_of_yojson]
+  command : string list; [@default []]
   service_config : (string * string) list;
       [@of_yojson string_map_of_yojson]
       [@to_yojson string_map_to_yojson]
@@ -99,6 +100,32 @@ let probe_of_json (p : probe_json) : probe =
 let workspace_of_json (w : workspace_json) : workspace_spec =
   { cwd = w.cwd; writable = w.writable }
 
+(* [command] is the argv rendered into a single ExecStart= line by
+ * [Render]. systemd parses unit files line-by-line, so a newline in any
+ * argument would split the directive and silently corrupt the unit.
+ * Reject it here — loudly, naming the argument — rather than letting it
+ * crash-loop at runtime. An empty command has no ExecStart to render, so
+ * it is rejected too. Embedded spaces/quotes are fine: [Render] quotes
+ * them per systemd's own rules. *)
+let validate_command (command : string list) : (unit, string) result =
+  match command with
+  | [] -> Error "command must have at least one element (the executable)"
+  | _ ->
+      let bad =
+        List.find_index
+          (fun a -> String.contains a '\n' || String.contains a '\r')
+          command
+      in
+      (match bad with
+       | None -> Ok ()
+       | Some i ->
+           Error
+             (Printf.sprintf
+                "command[%d] contains a newline, which cannot be rendered \
+                 into a systemd ExecStart= line; use pkgs.writeShellScript \
+                 for a multi-line launcher"
+                i))
+
 (* ---- Entry points --------------------------------------------------- *)
 
 let decode_services (j : Yojson.Safe.t) :
@@ -109,18 +136,22 @@ let decode_services (j : Yojson.Safe.t) :
         | [] -> Ok acc
         | (name, svc_j) :: tl -> (
             match service_json_of_yojson svc_j with
-            | Ok s ->
-                let spec : service_spec =
-                  {
-                    name;
-                    kind = s.kind;
-                    depends_on = s.depends_on;
-                    workspace = workspace_of_json s.workspace;
-                    probe = Option.map probe_of_json s.probe;
-                    service_config = s.service_config;
-                  }
-                in
-                loop (StringMap.add name spec acc) tl
+            | Ok s -> (
+                match validate_command s.command with
+                | Error e -> Error (Printf.sprintf "services.%s: %s" name e)
+                | Ok () ->
+                    let spec : service_spec =
+                      {
+                        name;
+                        kind = s.kind;
+                        command = s.command;
+                        depends_on = s.depends_on;
+                        workspace = workspace_of_json s.workspace;
+                        probe = Option.map probe_of_json s.probe;
+                        service_config = s.service_config;
+                      }
+                    in
+                    loop (StringMap.add name spec acc) tl)
             | Error e -> Error (Printf.sprintf "services.%s: %s" name e))
       in
       loop StringMap.empty fs

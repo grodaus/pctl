@@ -44,7 +44,7 @@
         # Spec-fixture derivations used by the OCaml Phase 2 unit tests.
         # Each is a `pkgs.writeText` whose outPath IS the spec.json file.
         # Committed into test/unit/fixtures/spec/*.json; regenerate with
-        #   nix build --no-link --print-out-paths '.#fixtures.<name>'
+        #   nix build --no-link --print-out-paths '.#fixtures-<name>'
         # See nix/fixtures.nix for the commit/regeneration recipe.
         fixtures = import ./nix/fixtures.nix {inherit pctlLib;};
 
@@ -165,7 +165,7 @@
           ];
         };
 
-        # Fixture derivations surfaced as `.#fixtures.<name>`; see
+        # Fixture derivations surfaced as `.#fixtures-<name>`; see
         # nix/fixtures.nix for the regeneration recipe. Phase-2
         # Spec-loader tests consume the checked-in JSON under
         # test/unit/fixtures/spec/, not these — exposing them keeps

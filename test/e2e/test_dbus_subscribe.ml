@@ -26,14 +26,14 @@ let () =
     {
       Harness.name = "web";
       probe = None;
-      service_config =
+      command =
         [
-          ("Type", "simple");
-          ( "ExecStart",
-            Printf.sprintf
-              "%s -c 'exec %s -c \"while true; do %s 3600; done\"'"
-              bash bash Harness.sleep_bin );
+          bash;
+          "-c";
+          Printf.sprintf "exec %s -c \"while true; do %s 3600; done\"" bash
+            Harness.sleep_bin;
         ];
+      service_config = [ ("Type", "simple") ];
       workspace = None;
       depends_on = [];
     }

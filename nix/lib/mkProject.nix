@@ -50,6 +50,25 @@
   _ = lib.mapAttrsToList checkDeps validated;
   depsChecked = builtins.deepSeq _ validated;
 
+  # `command` is the argv OCaml renders into a single ExecStart= line.
+  # systemd reads unit files line-by-line, so a newline in any argument
+  # would split the directive and silently corrupt the unit — fail loud
+  # at eval instead (a multi-line launcher belongs in a writeShellScript).
+  # OCaml's spec loader enforces the same rule; this is the friendlier,
+  # earlier half. Embedded spaces are fine: OCaml quotes them.
+  checkCommand = svcName: svc: let
+    command = svc.command or [];
+    hasNewline = a: (builtins.match ".*[\n\r].*" a) != null;
+  in
+    if command == []
+    then throw "pctl.mkProject: service '${svcName}' has an empty command; it needs at least one element (the executable)"
+    else if lib.any hasNewline command
+    then throw "pctl.mkProject: service '${svcName}' has a command element containing a newline, which cannot be rendered into a systemd ExecStart= line; use pkgs.writeShellScript for a multi-line launcher"
+    else null;
+
+  __ = lib.mapAttrsToList checkCommand depsChecked;
+  commandChecked = builtins.deepSeq __ depsChecked;
+
   # Inferred `kind` (Type= in systemd parlance) is derived from the
   # user's explicit serviceConfig.Type if present, else defaults to
   # "simple".
@@ -60,10 +79,12 @@
     then explicit
     else "simple";
 
-  # Merge sandbox defaults + command/env/limits + user's explicit
-  # serviceConfig (last writer wins). Produces the final string-keyed
-  # map OCaml consumes as-is. Workspace-derived keys are NOT included
-  # here — OCaml renders them from `workspace` at install time.
+  # Merge sandbox defaults + env/limits + user's explicit serviceConfig
+  # (last writer wins). Produces the final string-keyed map OCaml consumes
+  # as-is. `command` is NOT flattened into ExecStart here — it flows to
+  # OCaml as a JSON list and `lib/render/` renders the ExecStart= line
+  # with systemd-correct argv quoting. Workspace-derived keys are likewise
+  # rendered OCaml-side from `workspace` at install time.
   buildServiceConfig = svc: let
     envAttrs = svc.env or {};
     envLines = lib.mapAttrsToList (k: v: "${k}=${v}") envAttrs;
@@ -76,9 +97,6 @@
 
     base =
       sandboxDefaults
-      // {
-        ExecStart = lib.concatStringsSep " " svc.command;
-      }
       // lib.optionalAttrs (envLines != []) {Environment = envJoined;}
       // lib.optionalAttrs (svc ? restart) {Restart = svc.restart;}
       // lib.optionalAttrs (limits ? memoryMax) {MemoryMax = limits.memoryMax;}
@@ -102,6 +120,7 @@
 
   buildService = _svcName: svc: {
     kind = inferKind svc;
+    inherit (svc) command;
     depends_on = svc.dependsOn or [];
     workspace = {
       cwd = (svc.workspace or {}).cwd or false;
@@ -111,7 +130,7 @@
     service_config = buildServiceConfig svc;
   };
 
-  servicesObj = lib.mapAttrs buildService depsChecked;
+  servicesObj = lib.mapAttrs buildService commandChecked;
 
   spec = {
     version = 2;

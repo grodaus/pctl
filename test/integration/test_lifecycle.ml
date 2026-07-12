@@ -15,14 +15,15 @@ let project_path = Schema.Project_path.of_raw "/tmp/pctl-lifecycle-test"
 
 let ctx : Lifecycle.ctx = { id; host; project_path }
 
-let svc_simple ?(exec_start = "/bin/true") name : Schema.service_spec =
+let svc_simple ?(command = [ "/bin/true" ]) name : Schema.service_spec =
   {
     name;
     kind = Schema.Simple;
+    command;
     depends_on = [];
     workspace = { cwd = false; writable = false };
     probe = None;
-    service_config = [ ("ExecStart", exec_start); ("Type", "simple") ];
+    service_config = [ ("Type", "simple") ];
   }
 
 let spec_of_services (svcs : Schema.service_spec list) : Schema.spec =
@@ -154,7 +155,7 @@ let test_reload_one_service_changed () =
   let _ = L.up ~conn ~handle ~unit_store:us ~ctx ~spec:s1 () in
   let s2 =
     spec_of_services
-      [ svc_simple ~exec_start:"/bin/true --changed" "web"; svc_simple "db" ]
+      [ svc_simple ~command:[ "/bin/true"; "--changed" ] "web"; svc_simple "db" ]
   in
   let r = L.reload ~conn ~handle ~unit_store:us ~ctx ~spec:(Some s2) () in
   let changed =

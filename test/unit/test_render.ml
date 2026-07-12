@@ -9,12 +9,12 @@ let test_render_simple_service () =
     {
       name = "pg";
       kind = Simple;
+      command = [ "/nix/store/xxx/bin/postgres" ];
       depends_on = [];
       workspace = { cwd = false; writable = false };
       probe = None;
       service_config =
         [
-          ("ExecStart", "/nix/store/xxx/bin/postgres");
           ("Type", "simple");
           ("Restart", "on-failure");
           ("StateDirectory", "pg");
@@ -39,13 +39,13 @@ let test_render_service_with_workspace () =
     {
       name = "worker";
       kind = Oneshot;
+      command = [ "/bin/test" ];
       depends_on = [];
       workspace = { cwd = true; writable = true };
       probe = None;
       service_config =
         [
           ("Description", "my custom test service");
-          ("ExecStart", "/bin/test");
           ("Type", "oneshot");
         ];
     }
@@ -65,10 +65,11 @@ let test_render_service_with_deps () =
     {
       name = "server";
       kind = Simple;
+      command = [ "/bin/server" ];
       depends_on = [ "pg"; "migrate" ];
       workspace = { cwd = false; writable = false };
       probe = None;
-      service_config = [ ("ExecStart", "/bin/server"); ("Type", "simple") ];
+      service_config = [ ("Type", "simple") ];
     }
   in
   let got =
@@ -79,6 +80,19 @@ let test_render_service_with_deps () =
     Test_helpers.read_file (Test_helpers.render_fixture "deps_service.expected")
   in
   Alcotest.(check string) "depends_on → Requires/After golden" expected got
+
+let test_exec_start_quoting () =
+  let check msg expected command =
+    Alcotest.(check string) msg expected (Render.exec_start command)
+  in
+  check "plain args pass through" "/bin/prog --flag"
+    [ "/bin/prog"; "--flag" ];
+  check "embedded space is double-quoted" {|prog "hello world"|}
+    [ "prog"; "hello world" ];
+  check "backslash and double-quote are escaped" {|prog "a\"b\\c"|}
+    [ "prog"; {|a"b\c|} ];
+  check "literal percent is doubled" "prog 100%%" [ "prog"; "100%" ];
+  check "empty arg renders as empty quotes" {|prog ""|} [ "prog"; "" ]
 
 let test_render_slice () =
   let slc =
@@ -101,6 +115,7 @@ let () =
             test_render_service_with_workspace;
           test_case "service golden (depends_on)" `Quick
             test_render_service_with_deps;
+          test_case "ExecStart argv quoting" `Quick test_exec_start_quoting;
           test_case "slice golden" `Quick test_render_slice;
         ] );
     ]

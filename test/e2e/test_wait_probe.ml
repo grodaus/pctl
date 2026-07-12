@@ -30,15 +30,15 @@ let () =
             period_seconds = 1;
             timeout_seconds = 10;
           };
-      service_config =
+      command =
         [
-          ("Type", "simple");
-          ( "ExecStart",
-            Printf.sprintf
-              "%s -c '%s 0.5; %s %s; exec %s -c \"while true; do %s 3600; \
-               done\"'"
-              bash Harness.sleep_bin touch flag bash Harness.sleep_bin );
+          bash;
+          "-c";
+          Printf.sprintf
+            "%s 0.5; %s %s; exec %s -c \"while true; do %s 3600; done\""
+            Harness.sleep_bin touch flag bash Harness.sleep_bin;
         ];
+      service_config = [ ("Type", "simple") ];
       workspace = None;
       depends_on = [];
     }

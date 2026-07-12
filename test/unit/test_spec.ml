@@ -28,9 +28,10 @@ let test_spec_load_single () =
   Alcotest.(check bool) "workspace.cwd" false pg.workspace.cwd;
   Alcotest.(check bool) "workspace.writable" false pg.workspace.writable;
   Alcotest.(check bool) "probe is None" true (pg.probe = None);
+  Alcotest.(check (list string)) "command" [ "/bin/true" ] pg.command;
   let sc = pg.service_config in
   Alcotest.(check (option string))
-    "ExecStart" (Some "/bin/true") (List.assoc_opt "ExecStart" sc);
+    "ExecStart not in service_config" None (List.assoc_opt "ExecStart" sc);
   Alcotest.(check (option string))
     "Type" (Some "simple") (List.assoc_opt "Type" sc)
 
@@ -211,6 +212,46 @@ let test_spec_load_bad_kind () =
           | _ -> false)
         (fun () -> Spec.load (Fpath.v path)))
 
+let test_spec_load_command_with_newline () =
+  (* A newline in a command element would split the rendered ExecStart=
+   * line and silently corrupt the unit — the loader rejects it, naming
+   * the offending index. *)
+  let path =
+    Test_helpers.write_temp_file ~prefix:"pctl-nlcmd-"
+      ~contents:
+        "{\"version\": 2, \"slice\": {}, \
+         \"services\": {\"pg\": {\"kind\": \"simple\", \
+         \"command\": [\"bash\", \"-c\", \"if x\\nthen y\\nfi\"], \
+         \"service_config\": {}}}}"
+  in
+  Fun.protect
+    ~finally:(fun () -> try Sys.remove path with _ -> ())
+    (fun () ->
+      check_raises_pctl ~name:"command with newline"
+        ~predicate:(function
+          | Spec_parse { msg; _ } ->
+              Test_helpers.contains_substring msg "newline"
+          | _ -> false)
+        (fun () -> Spec.load (Fpath.v path)))
+
+let test_spec_load_empty_command () =
+  let path =
+    Test_helpers.write_temp_file ~prefix:"pctl-emptycmd-"
+      ~contents:
+        "{\"version\": 2, \"slice\": {}, \
+         \"services\": {\"pg\": {\"kind\": \"simple\", \
+         \"command\": [], \"service_config\": {}}}}"
+  in
+  Fun.protect
+    ~finally:(fun () -> try Sys.remove path with _ -> ())
+    (fun () ->
+      check_raises_pctl ~name:"empty command"
+        ~predicate:(function
+          | Spec_parse { msg; _ } ->
+              Test_helpers.contains_substring msg "command"
+          | _ -> false)
+        (fun () -> Spec.load (Fpath.v path)))
+
 let () =
   let open Alcotest in
   run "pctl spec"
@@ -241,5 +282,9 @@ let () =
           test_case "non-string service_config value -> Spec_parse" `Quick
             test_spec_load_bad_service_config_value;
           test_case "unknown kind -> Spec_parse" `Quick test_spec_load_bad_kind;
+          test_case "command with newline -> Spec_parse" `Quick
+            test_spec_load_command_with_newline;
+          test_case "empty command -> Spec_parse" `Quick
+            test_spec_load_empty_command;
         ] );
     ]

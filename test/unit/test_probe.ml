@@ -23,6 +23,7 @@ let svc_no_probe name : Schema.service_spec =
   {
     name;
     kind = Schema.Simple;
+    command = [ "/bin/true" ];
     depends_on = [];
     workspace = { cwd = false; writable = false };
     probe = None;

@@ -17,11 +17,8 @@ let () =
             period_seconds = 1;
             timeout_seconds = 10;
           };
-      service_config =
-        [
-          ("Type", "simple");
-          ("ExecStart", Printf.sprintf "%s infinity" sleep_bin);
-        ];
+      command = [ sleep_bin; "infinity" ];
+      service_config = [ ("Type", "simple") ];
       workspace = None;
       depends_on = [];
     }

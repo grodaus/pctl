@@ -23,13 +23,8 @@ let () =
   let web_service =
     {
       Harness.name = "web";
-      service_config =
-        [
-          ("Type", "simple");
-          ( "ExecStart",
-            Printf.sprintf "%s infinity" "/run/current-system/sw/bin/sleep" );
-          ("Description", "web-v2");
-        ];
+      command = [ "/run/current-system/sw/bin/sleep"; "infinity" ];
+      service_config = [ ("Type", "simple"); ("Description", "web-v2") ];
       workspace = None;
       probe = None;
       depends_on = [];

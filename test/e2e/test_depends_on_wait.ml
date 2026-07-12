@@ -25,13 +25,9 @@ let () =
     {
       name = "migrate";
       probe = None;
-      service_config =
-        [
-          ("Type", "oneshot");
-          ("RemainAfterExit", "yes");
-          ( "ExecStart",
-            Printf.sprintf "%s -c '%s 1.5 && %s'" bash sleep_bin true_bin );
-        ];
+      command =
+        [ bash; "-c"; Printf.sprintf "%s 1.5 && %s" sleep_bin true_bin ];
+      service_config = [ ("Type", "oneshot"); ("RemainAfterExit", "yes") ];
       workspace = None;
       depends_on = [];
     }
@@ -45,11 +41,8 @@ let () =
     {
       name;
       probe = None;
-      service_config =
-        [
-          ("Type", "simple");
-          ("ExecStart", Printf.sprintf "%s infinity" sleep_bin);
-        ];
+      command = [ sleep_bin; "infinity" ];
+      service_config = [ ("Type", "simple") ];
       workspace = None;
       depends_on = [ "migrate" ];
     }

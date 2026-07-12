@@ -13,12 +13,11 @@ let () =
       let writer =
         {
           Harness.name = "writer";
+          command = [ touch; Printf.sprintf "%s/hello" scratch.project_dir ];
           service_config =
             [
               ("Type", "oneshot");
               ("RemainAfterExit", "yes");
-              ( "ExecStart",
-                Printf.sprintf "%s %s/hello" touch scratch.project_dir );
               ("NoNewPrivileges", "yes");
               ("ProtectSystem", "strict");
             ];

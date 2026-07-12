@@ -47,6 +47,50 @@ let expand_key k v =
 let expand_entries kvs = List.concat_map (fun (k, v) -> expand_key k v) kvs
 
 (* ------------------------------------------------------------------ *)
+(* ExecStart from argv                                                  *)
+(* ------------------------------------------------------------------ *)
+
+(* Render a [command] argv into a single ExecStart= value, preserving
+ * argument boundaries under systemd's own command-line parsing:
+ *
+ *   - an argument is emitted bare unless it holds whitespace, a quote, or
+ *     a backslash — those get wrapped in double quotes with '\' and '"'
+ *     backslash-escaped, so systemd hands the program exactly one arg;
+ *   - a literal '%' is always doubled, since systemd expands
+ *     %-specifiers even inside quotes.
+ *
+ * Newlines never reach here — [Spec.validate_command] rejects them at
+ * load time (a multi-line launcher belongs in a writeShellScript, not an
+ * ExecStart line), so there is no newline case to escape. *)
+let arg_needs_quoting s =
+  s = ""
+  || String.exists
+       (function ' ' | '\t' | '"' | '\'' | '\\' -> true | _ -> false)
+       s
+
+let quote_arg raw =
+  if (not (arg_needs_quoting raw)) && not (String.contains raw '%') then raw
+  else begin
+    let quoted = arg_needs_quoting raw in
+    let buf = Buffer.create (String.length raw + 2) in
+    if quoted then Buffer.add_char buf '"';
+    String.iter
+      (fun c ->
+        match c with
+        | ('\\' | '"') when quoted ->
+            Buffer.add_char buf '\\';
+            Buffer.add_char buf c
+        | '%' -> Buffer.add_string buf "%%"
+        | c -> Buffer.add_char buf c)
+      raw;
+    if quoted then Buffer.add_char buf '"';
+    Buffer.contents buf
+  end
+
+let exec_start (command : string list) : string =
+  String.concat " " (List.map quote_arg command)
+
+(* ------------------------------------------------------------------ *)
 (* Workspace-derived [Service] keys                                     *)
 (* ------------------------------------------------------------------ *)
 
@@ -131,9 +175,14 @@ let service ~(service : service_spec) ~(id : project_id)
   let extra =
     List.filter (fun (k, _) -> not (List.mem k user_keys)) defaults
   in
-  let sc_wo_desc = List.filter (fun (k, _) -> k <> "Description") sc in
+  (* ExecStart is rendered from [command] — the single source of truth —
+   * and emitted first. Drop Description (emitted in [Unit]) and any stray
+   * ExecStart carried in service_config so the two can't disagree. *)
+  let sc_wo_desc =
+    List.filter (fun (k, _) -> k <> "Description" && k <> "ExecStart") sc
+  in
   let service_kvs =
-    (sc_wo_desc @ extra)
+    (("ExecStart", exec_start service.command) :: (sc_wo_desc @ extra))
     |> List.map (apply_id_prefix ~id)
     |> expand_entries
   in

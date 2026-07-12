@@ -374,6 +374,7 @@ type workspace_spec = { cwd : bool; writable : bool }
 type service_spec = {
   name : string;
   kind : kind;
+  command : string list;  (** argv; rendered into ExecStart= by [Render]. *)
   depends_on : string list;
   workspace : workspace_spec;
   probe : probe option;

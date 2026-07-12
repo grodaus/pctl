@@ -8,7 +8,7 @@
  * the manifest table, and the rendered unit files on disk. *)
 
 let single_spec_json =
-  {|{"services":{"pg":{"depends_on":[],"kind":"simple","probe":null,"service_config":{"ExecStart":"/bin/true","NoNewPrivileges":"yes","ProtectControlGroups":"yes","ProtectHome":"read-only","ProtectKernelModules":"yes","ProtectKernelTunables":"yes","ProtectSystem":"strict","RestrictNamespaces":"yes","RestrictSUIDSGID":"yes","Type":"simple"},"workspace":{"cwd":false,"writable":false}}},"slice":{"slice_config":{}},"version":2}|}
+  {|{"services":{"pg":{"command":["/bin/true"],"depends_on":[],"kind":"simple","probe":null,"service_config":{"NoNewPrivileges":"yes","ProtectControlGroups":"yes","ProtectHome":"read-only","ProtectKernelModules":"yes","ProtectKernelTunables":"yes","ProtectSystem":"strict","RestrictNamespaces":"yes","RestrictSUIDSGID":"yes","Type":"simple"},"workspace":{"cwd":false,"writable":false}}},"slice":{"slice_config":{}},"version":2}|}
 
 module Stub_nix : Cli.Pipeline.NIX = struct
   let out_path ~attr:_ ~cwd:_ ~env:_ ~sw:_ =
