@@ -23,11 +23,11 @@ Three layers, all in OCaml (dune + alcotest + qcheck):
 
 - **Pure / unit** (`test/unit/`) — alcotest + qcheck property tests over the pure core (schema, identity, manifest, render). Sandbox-safe.
 - **Integration** (`test/integration/`) — in-process tests against the Fake Systemctl adapter (alcotest-eio). Sandbox-safe.
-- **Reality / e2e** (`test/e2e/`, dune alias `e2e`) — exercises real `systemd --user`. Requires a live user session; NOT runnable in the Nix sandbox.
+- **Reality / e2e** (`test/e2e/`, dune alias `e2e`) — exercises real `systemd --user`. Needs a live user session, so the *only* place it can't run is the Nix sandbox (which is why it's excluded from `nix flake check`). An interactive session on the host almost always has one — confirm with `systemctl --user is-system-running` and run it. Do NOT assume it's unavailable and skip it.
 
 Run with:
 
 - `dune test` runs the two sandbox-safe layers (unit + integration). The same suite is surfaced by the `ocaml-tests` check in `nix flake check`.
-- `dune build @e2e` (or `dune build @e2e --force` to re-run) runs the real-systemd suite on the host.
+- `dune build @e2e` (or `dune build @e2e --force` to re-run) runs the real-systemd suite on the host. Run it before claiming any e2e-affecting change works — when working interactively, a live user session is the norm, not the exception.
 
 Each reality test uses a unique tmpdir → unique **project id** → unique **slice**, so tests don't collide with each other or with the dev's real projects on the same session. `cleanup_stragglers` sweeps leaked slices at suite start.
