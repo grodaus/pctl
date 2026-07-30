@@ -140,8 +140,8 @@ let test_class_orphan_null_session () =
     (Gc.class_of_row ~boot_id:"boot-A" row)
 
 let test_class_empty_boot_id_never_live () =
-  (* Edge: if current_boot_id () returns "" (e.g. /proc unavailable),
-     a row with session_id = Some "" must still be Orphan, not Live. *)
+  (* Gc can no longer reach boot_id = "", but class_of_row is pure and
+     keeps the guard. *)
   Test_helpers.with_tmpdir @@ fun path ->
   let row : State.Projects.t =
     {
@@ -228,25 +228,16 @@ let test_purge_removes_orphan_and_unknown () =
 
 let test_purge_preserves_live_rows () =
   with_sandbox @@ fun ~sw:_ ~env:_ ~conn ~handle ~xdg ->
-  (* To fabricate a Live row we need session_id = current_boot_id (). If
-     boot_id is empty (e.g. no /proc), this test degenerates to "no
-     row is Live, so purge removes everything" — which is still a
-     correct contract, so we assert based on the actual boot_id at
-     runtime. *)
-  let boot = Gc.current_boot_id () in
+  (* Same source G.purge classifies against; it never yields "", so there
+     is no empty-boot_id case to branch on (pctl-2jn). *)
+  let boot = Clock.read_boot_id_exn () in
   upsert_row conn ~id:"live" ~path:xdg ~session_id:boot ();
   upsert_row conn ~id:"orphan" ~path:xdg ~session_id:"stale" ();
   let removed = G.purge ~conn ~handle in
-  let remaining = ids_sorted conn in
-  if boot <> "" then begin
-    Alcotest.(check int) "purged 1 orphan, kept 1 live" 1 removed;
-    Alcotest.(check (list string))
-      "only live row remains" [ "live" ] remaining
-  end
-  else begin
-    Alcotest.(check int) "empty boot_id → both removed" 2 removed;
-    Alcotest.(check (list string)) "nothing remains" [] remaining
-  end
+  Alcotest.(check int) "purged 1 orphan, kept 1 live" 1 removed;
+  Alcotest.(check (list string))
+    "only live row remains" [ "live" ]
+    (ids_sorted conn)
 
 let () =
   Alcotest.run "pctl gc"

@@ -1,7 +1,15 @@
 (* Clock — wall-clock and boot-id source.
  *
- * Split out of lib/cli/common.ml so Pipeline can be tested with a
- * frozen clock for deterministic timestamps and manifest rows. *)
+ * Split out of the CLI layer so Pipeline can be tested with a frozen
+ * clock for deterministic timestamps and manifest rows. *)
+
+let boot_id_path = "/proc/sys/kernel/random/boot_id"
+
+(* input_all, not in_channel_length: /proc reports length 0. Raises on a
+ * blank read too — "" makes Session.reset and gc delete every row (pctl-2jn). *)
+let read_boot_id_exn ?(path = boot_id_path) () : string =
+  let raw = String.trim (In_channel.with_open_text path In_channel.input_all) in
+  if raw = "" then raise (Sys_error (path ^ ": empty boot id")) else raw
 
 module type S = sig
   val now_iso8601 : unit -> string
@@ -15,24 +23,9 @@ module Real : S = struct
       (tm.tm_year + 1900) (tm.tm_mon + 1) tm.tm_mday
       tm.tm_hour tm.tm_min tm.tm_sec
 
-  (* Drain /proc/sys/kernel/random/boot_id by reading to EOF — virtual
-   * files report length 0 via in_channel_length. Same policy as
-   * lib/state/session.ml. Returns "" on any failure (caller stores NULL
-   * when empty). *)
-  let read_boot_id () : string =
-    try
-      let ic = open_in "/proc/sys/kernel/random/boot_id" in
-      Fun.protect
-        ~finally:(fun () -> close_in ic)
-        (fun () ->
-          let buf = Buffer.create 64 in
-          (try
-             while true do
-               Buffer.add_channel buf ic 1
-             done
-           with End_of_file -> ());
-          String.trim (Buffer.contents buf))
-    with _ -> ""
+  (* Degrades for [Pipeline]'s metadata stamp only, never for a decision
+   * that removes rows. "" is unreachable there in practice — pctl-4qh. *)
+  let read_boot_id () : string = try read_boot_id_exn () with _ -> ""
 end
 
 let frozen ~now ~boot : (module S) =

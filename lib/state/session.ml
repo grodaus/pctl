@@ -12,26 +12,6 @@
  * GC, project lookup, upsert — all of it presupposes the session has
  * been reconciled. *)
 
-let boot_id_path = "/proc/sys/kernel/random/boot_id"
-
-(* /proc files report length 0 via [in_channel_length] (they are virtual
- * — the kernel can't know the rendered size without reading). We must
- * drain the channel by reading until EOF instead of pre-sizing by
- * [in_channel_length]. Pre-fix, [Session.reset] saw "" as the boot_id
- * and wiped every row on every invocation. *)
-let read_boot_id () : string =
-  let ic = open_in boot_id_path in
-  Fun.protect
-    ~finally:(fun () -> close_in ic)
-    (fun () ->
-      let buf = Buffer.create 64 in
-      (try
-         while true do
-           Buffer.add_channel buf ic 1
-         done
-       with End_of_file -> ());
-      String.trim (Buffer.contents buf))
-
 let reset_query =
   let open Caqti_request.Infix in
   let open Caqti_type.Std in
@@ -72,6 +52,7 @@ let reset_with_boot_id (conn : Db.t) ~(boot_id : string) : unit =
   | Ok () -> ()
   | Error e -> raise_io ~id:"session_reset" e
 
+(* The raising reader, deliberately: a "" boot_id makes [reset_query]'s
+ * `session_id != ?` match every row and wipe the registry. *)
 let reset (conn : Db.t) : unit =
-  let boot_id = read_boot_id () in
-  reset_with_boot_id conn ~boot_id
+  reset_with_boot_id conn ~boot_id:(Clock.read_boot_id_exn ())

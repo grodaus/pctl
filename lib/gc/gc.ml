@@ -5,6 +5,9 @@
  *   Live     — session_id = current boot_id (row is from this session)
  *   Orphan   — otherwise (session_id NULL after session reset, path exists)
  *
+ * Boot id via [Clock.read_boot_id_exn], never the degrading reader: "" can
+ * never satisfy the Live guard, so gc would delete everything (pctl-2jn).
+ *
  * Note: the alternative derivation "Orphan iff session_id != current
  * boot_id" never fires: [Session.reset] NULLs every stale session_id at
  * connection open, so by the time Gc sees a row the stale path is always
@@ -13,7 +16,7 @@
  * Opportunistic sweep semantics:
  *   - Env guard PCTL_NO_GC=1 returns immediately, BEFORE any DB work.
  *   - Callers invoke [opportunistic_sweep] as the first op inside
- *     [Common.with_connection], so session reset has already run. A
+ *     [Pipeline.with_connection], so session reset has already run. A
  *     path that "no longer exists" is classified as Unknown; Unknown
  *     rows with no live session get their units removed + row deleted.
  *   - Failures warn to stderr and return unit; never abort the outer
@@ -28,9 +31,6 @@
 
 let no_gc_env () : bool =
   match Sys.getenv_opt "PCTL_NO_GC" with Some "1" -> true | _ -> false
-
-let current_boot_id () : string =
-  try State.Session.read_boot_id () with _ -> ""
 
 let class_of_row ~(boot_id : string) (row : State.Projects.t) : Schema.class_ =
   if not (Sys.file_exists row.path) then Schema.Unknown
@@ -97,7 +97,7 @@ module Make (M : Systemctl.S) = struct
     if no_gc_env () then ()
     else
       try
-        let boot_id = current_boot_id () in
+        let boot_id = Clock.read_boot_id_exn () in
         let rows = State.Projects.all conn in
         List.iter
           (fun row ->
@@ -118,7 +118,7 @@ module Make (M : Systemctl.S) = struct
    * row. Returns the number of projects removed. Prints one "removed
    * <id>" line per row (stdout) so the user can see progress. *)
   let purge ~(conn : State.Db.t) ~(handle : M.t) : int =
-    let boot_id = current_boot_id () in
+    let boot_id = Clock.read_boot_id_exn () in
     let rows = State.Projects.all conn in
     List.fold_left
       (fun removed row ->
@@ -139,6 +139,6 @@ end
 (* Report-only (no --yes) classification output — one row per project.
  * Caller prints; no systemctl handle needed. *)
 let report ~(conn : State.Db.t) : (State.Projects.t * Schema.class_) list =
-  let boot_id = current_boot_id () in
+  let boot_id = Clock.read_boot_id_exn () in
   State.Projects.all conn
   |> List.map (fun row -> (row, class_of_row ~boot_id row))

@@ -7,5 +7,5 @@
 (library
  (name gc)
  (public_name pctl.gc)
- (libraries schema identity unit_store state systemctl eio eio.unix unix)
+ (libraries schema identity unit_store state systemctl clock eio eio.unix unix)
  (instrumentation (backend bisect_ppx)))
