@@ -2,7 +2,7 @@
  *
  * Cmdliner entry: dispatches to the per-command runners in `Cli`.
  * Each command opens its own Eio environment + Switch; Systemctl.Dbus
- * is the default handle. Errors flow through Common.run_with_errors. *)
+ * is the default handle. Errors flow through Cli.Pipeline.run. *)
 
 open Cmdliner
 

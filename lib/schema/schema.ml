@@ -94,7 +94,6 @@ type error =
   | Install_failed of { path : string; reason : string }
   | Bus_connect_failed of { msg : string }
   | Unit_op_failed of { op : string; unit_ : string; reply : string }
-  | Probe_exec_failed of { service : string; msg : string }
   | Probe_timeout of { service : string; timeout_ms : int }
   | Identity_invalid of { path : string; reason : string }
   | Registry_io of { id : string; reason : string }
@@ -111,7 +110,6 @@ module Project_id : sig
   val of_string_opt : string -> t option
   val to_string : t -> string
   val equal : t -> t -> bool
-  val compare : t -> t -> int
 end = struct
   type t = string
 
@@ -143,7 +141,6 @@ end = struct
 
   let to_string s = s
   let equal = String.equal
-  let compare = String.compare
 end
 
 type project_id = Project_id.t
@@ -157,7 +154,6 @@ module Host : sig
   val of_string_opt : string -> t option
   val to_string : t -> string
   val equal : t -> t -> bool
-  val compare : t -> t -> int
 end = struct
   type t = string
 
@@ -187,7 +183,6 @@ end = struct
   let of_string_opt s = match parse s with Ok s -> Some s | Error _ -> None
   let to_string s = s
   let equal = String.equal
-  let compare = String.compare
 end
 
 type host = Host.t
@@ -201,11 +196,8 @@ module Project_path : sig
   type t = private Fpath.t
 
   val of_raw : string -> t
-  val of_raw_opt : string -> t option
   val to_string : t -> string
   val to_fpath : t -> Fpath.t
-  val equal : t -> t -> bool
-  val compare : t -> t -> int
 end = struct
   type t = Fpath.t
 
@@ -281,16 +273,12 @@ end = struct
     | Ok n -> n
     | Error reason -> raise (Pctl_error (Identity_invalid { path = raw; reason }))
 
-  let of_raw_opt raw = match parse raw with Ok n -> Some n | Error _ -> None
-
   let to_string p =
     let s = Fpath.to_string p in
     let len = String.length s in
     if len > 1 && s.[len - 1] = '/' then String.sub s 0 (len - 1) else s
 
   let to_fpath p = p
-  let equal = Fpath.equal
-  let compare = Fpath.compare
 end
 
 type project_path = Project_path.t
@@ -481,8 +469,6 @@ let render_error = function
       Printf.sprintf "sd-bus connect failed: %s" msg
   | Unit_op_failed { op; unit_; reply } ->
       Printf.sprintf "systemctl %s %s failed: %s" op unit_ reply
-  | Probe_exec_failed { service; msg } ->
-      Printf.sprintf "probe for service %s failed to exec: %s" service msg
   | Probe_timeout { service; timeout_ms } ->
       Printf.sprintf "probe for service %s timed out after %d ms" service
         timeout_ms
@@ -500,7 +486,7 @@ let render_error = function
  *   3 — nix build failure
  *   4 — install / registry I/O
  *   5 — dbus connect / unit op
- *   6 — probe failures (exec or timeout)
+ *   6 — probe timeout
  *
  * Identity_invalid is input validation, not I/O — it belongs in the spec
  * bucket (2), not I/O (4). *)
@@ -511,7 +497,7 @@ let error_exit_code = function
   | Nix_build_failed _ -> 3
   | Install_failed _ | Registry_io _ -> 4
   | Bus_connect_failed _ | Unit_op_failed _ -> 5
-  | Probe_exec_failed _ | Probe_timeout _ -> 6
+  | Probe_timeout _ -> 6
   (* Journalctl's own exit code bubbles up — we don't override it with
    * a bucket. Use 0 here so [error_exit_code] is total; [Logs.run]
    * short-circuits and calls [exit] with the journalctl exit code

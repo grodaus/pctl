@@ -13,8 +13,6 @@
  * line — an absolute /nix/store path. If the attribute builds multiple
  * derivations, we take the last line (matching Nushell `lines | last`). *)
 
-let buf_sink_to_string (buf : Buffer.t) : string = Buffer.contents buf
-
 let last_line (s : string) : string =
   let s = String.trim s in
   match String.rindex_opt s '\n' with
@@ -45,7 +43,7 @@ let print_out_paths ~attr ?(cwd : Fpath.t option) ~env ~sw () : string =
           ~stderr:stderr_sink args
   in
   match Eio.Process.await proc with
-  | `Exited 0 -> last_line (buf_sink_to_string stdout_buf)
+  | `Exited 0 -> last_line (Buffer.contents stdout_buf)
   | `Exited n ->
       raise
         (Schema.Pctl_error
@@ -53,7 +51,7 @@ let print_out_paths ~attr ?(cwd : Fpath.t option) ~env ~sw () : string =
               {
                 expr = attr;
                 exit_code = n;
-                stderr = buf_sink_to_string stderr_buf;
+                stderr = Buffer.contents stderr_buf;
               }))
   | `Signaled s ->
       raise
@@ -62,7 +60,7 @@ let print_out_paths ~attr ?(cwd : Fpath.t option) ~env ~sw () : string =
               {
                 expr = attr;
                 exit_code = 128 + s;
-                stderr = buf_sink_to_string stderr_buf;
+                stderr = Buffer.contents stderr_buf;
               }))
 
 (* Nix port — Pipeline.Make depends on this signature.

@@ -18,7 +18,7 @@ _Implemented across [`lib/cli/`](./lib/cli) command modules; shared state in [`l
 
 ## Artifacts
 
-_Rendered by [`lib/render/`](./lib/render); written to disk by [`lib/install/`](./lib/install); manifest stored via [`lib/state/`](./lib/state)._
+_Rendered by [`lib/render/`](./lib/render); written to disk by [`lib/unit_store/`](./lib/unit_store); sequenced by [`lib/lifecycle/`](./lib/lifecycle); manifest stored via [`lib/state/`](./lib/state)._
 
 | Term            | Definition                                                                                                                  | Aliases to avoid             |
 | --------------- | --------------------------------------------------------------------------------------------------------------------------- | ---------------------------- |
@@ -59,7 +59,7 @@ _Implemented in [`lib/gc/`](./lib/gc); known markers written alongside the regis
 
 ## Reload diff
 
-_Computed in [`lib/plan/`](./lib/plan); applied via the [`lib/systemctl/`](./lib/systemctl) port._
+_Diffed by [`lib/state/`](./lib/state) (`Projects.diff_manifest`); formatted for output by [`lib/plan/`](./lib/plan); applied by [`lib/lifecycle/`](./lib/lifecycle) through the [`lib/systemctl/`](./lib/systemctl) port._
 
 | Term                     | Definition                                                          | Aliases to avoid |
 | ------------------------ | ------------------------------------------------------------------- | ---------------- |
@@ -86,9 +86,9 @@ _Three layers in [`test/unit/`](./test/unit), [`test/integration/`](./test/integ
 | Term            | Definition                                                                                                             | Aliases to avoid   |
 | --------------- | ---------------------------------------------------------------------------------------------------------------------- | ------------------ |
 | **Reality test**| An e2e test run against the host's real `systemd --user`; the only layer that verifies actual activation behaviour     | Smoke test         |
-| **Harness**     | Shared setup/teardown helpers (`setup`, `teardown`, `write-tree`, `wait-active`, `cleanup-stragglers`)                 | Fixture, helpers   |
-| **Scratch**     | The ephemeral record `{tmp, project_dir, tree_dir}` a harness produces for one test                                    | Sandbox, workspace |
-| **Straggler**   | A slice left behind on the host session by a crashed test run; swept at suite start by id                              | Leak, zombie       |
+| **Harness**     | Shared setup/teardown helpers in `test/e2e/harness.ml` (`setup`, `with_scratch`, `spec_json`, `wait_active`, `teardown`) | Fixture, helpers   |
+| **Scratch**     | The ephemeral record `{tmp, project_dir, spec_path, xdg_state_home, xdg_state_home_prev}` a harness produces for one test | Sandbox, workspace |
+| **Straggler**   | A slice left behind on the host session by a crashed test run; each test's `teardown` takes its own project down, but there is no suite-start sweep | Leak, zombie       |
 
 ## Relationships
 

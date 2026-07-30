@@ -123,15 +123,29 @@ let sd_bus_message_handler_t =
       (sd_bus_message @-> ptr void @-> ptr Sd_bus_error.struct_t
      @-> returning int))
 
+(* All symbols in one lazily-built record: a top-level [foreign] would dlopen
+ * at module init, aborting binaries that never touch the bus. *)
 module Ffi = struct
+  type error_p = Sd_bus_error.t Ctypes.structure C.ptr
+
+  (* dest -> path -> iface -> member -> err -> reply -> types -> … *)
+  type 'a call_method =
+    sd_bus ->
+    string ->
+    string ->
+    string ->
+    string ->
+    error_p ->
+    sd_bus_message C.ptr ->
+    string ->
+    'a
+
   type t = {
     sd_bus_default_user : sd_bus C.ptr -> int;
     sd_bus_open_user : sd_bus C.ptr -> int;
     sd_bus_unref : sd_bus -> sd_bus;
     sd_bus_message_unref : sd_bus_message -> sd_bus_message;
-    sd_bus_error_free :
-      Sd_bus_error.t Ctypes.structure C.ptr -> unit;
-    sd_bus_get_fd : sd_bus -> int;
+    sd_bus_error_free : error_p -> unit;
     sd_bus_process : sd_bus -> sd_bus_message C.ptr -> int;
     sd_bus_wait : sd_bus -> Unsigned.uint64 -> int;
     sd_bus_slot_unref : sd_bus_slot -> sd_bus_slot;
@@ -139,14 +153,34 @@ module Ffi = struct
       sd_bus ->
       sd_bus_slot C.ptr ->
       string ->
-      (sd_bus_message ->
-      unit C.ptr ->
-      Sd_bus_error.t Ctypes.structure C.ptr ->
-      int) ->
+      (sd_bus_message -> unit C.ptr -> error_p -> int) ->
       unit C.ptr ->
       int;
     sd_bus_message_read_basic : sd_bus_message -> char -> unit C.ptr -> int;
+    (* types = "ss" — StartUnit/StopUnit/RestartUnit, Properties.Get. *)
+    call_method_ss : (string -> string -> int) call_method;
+    (* types = "s" — ResetFailedUnit, GetUnit. *)
+    call_method_s : (string -> int) call_method;
+    (* types = "" — Reload, Subscribe, Unsubscribe. *)
+    call_method_no_args : int call_method;
+    (* types = "s" | "o" — same C signature, only the type code differs. *)
+    message_read_cstr :
+      sd_bus_message -> string -> char C.ptr option C.ptr -> int;
+    message_enter_container : sd_bus_message -> char -> string -> int;
+    message_exit_container : sd_bus_message -> int;
   }
+
+  let call_method_t ret =
+    C.(
+      sd_bus
+      @-> string (* destination *)
+      @-> string (* path *)
+      @-> string (* interface *)
+      @-> string (* member *)
+      @-> ptr Sd_bus_error.struct_t
+      @-> ptr sd_bus_message (* reply *)
+      @-> string (* types *)
+      @-> ret)
 
   let build () : t =
     {
@@ -161,7 +195,6 @@ module Ffi = struct
       sd_bus_error_free =
         foreign "sd_bus_error_free"
           C.(ptr Sd_bus_error.struct_t @-> returning void);
-      sd_bus_get_fd = foreign "sd_bus_get_fd" C.(sd_bus @-> returning int);
       sd_bus_process =
         foreign "sd_bus_process"
           C.(sd_bus @-> ptr sd_bus_message @-> returning int);
@@ -178,6 +211,27 @@ module Ffi = struct
       sd_bus_message_read_basic =
         foreign "sd_bus_message_read_basic"
           C.(sd_bus_message @-> char @-> ptr void @-> returning int);
+      call_method_ss =
+        foreign "sd_bus_call_method"
+          (call_method_t C.(string @-> string @-> returning int));
+      call_method_s =
+        foreign "sd_bus_call_method"
+          (call_method_t C.(string @-> returning int));
+      call_method_no_args =
+        foreign "sd_bus_call_method" (call_method_t C.(returning int));
+      message_read_cstr =
+        foreign "sd_bus_message_read"
+          C.(
+            sd_bus_message
+            @-> string (* types = "s" | "o" *)
+            @-> ptr (ptr_opt char) (* char **value *)
+            @-> returning int);
+      message_enter_container =
+        foreign "sd_bus_message_enter_container"
+          C.(sd_bus_message @-> char @-> string @-> returning int);
+      message_exit_container =
+        foreign "sd_bus_message_exit_container"
+          C.(sd_bus_message @-> returning int);
     }
 
   let cache : t option ref = ref None
@@ -190,113 +244,6 @@ module Ffi = struct
         cache := Some f;
         f
 end
-
-(* ------------------------------------------------------------------ *)
-(* Variadic FFI: sd_bus_call_method + sd_bus_message_read.
- *
- * These take `(..., const char *types, ...)`. We don't need full
- * variadic support — every call we make has a known, fixed signature.
- * We declare one specialisation per signature.
- *)
-(* ------------------------------------------------------------------ *)
-
-(* sd_bus_call_method signature used everywhere we pass a (s s) string
- * pair (StartUnit/StopUnit/RestartUnit). Returns int; populates reply. *)
-let sd_bus_call_method_ss =
-  foreign "sd_bus_call_method"
-    C.(
-      sd_bus
-      @-> string  (* destination *)
-      @-> string  (* path *)
-      @-> string  (* interface *)
-      @-> string  (* member *)
-      @-> ptr Sd_bus_error.struct_t
-      @-> ptr sd_bus_message  (* reply *)
-      @-> string  (* types = "ss" *)
-      @-> string  (* first s *)
-      @-> string  (* second s *)
-      @-> returning int)
-
-(* sd_bus_call_method variant for Reload() — no args; types = "". *)
-let sd_bus_call_method_no_args =
-  foreign "sd_bus_call_method"
-    C.(
-      sd_bus
-      @-> string
-      @-> string
-      @-> string
-      @-> string
-      @-> ptr Sd_bus_error.struct_t
-      @-> ptr sd_bus_message
-      @-> string  (* "" *)
-      @-> returning int)
-
-(* sd_bus_call_method for GetUnit(s) -> o. One string arg. *)
-let sd_bus_call_method_s =
-  foreign "sd_bus_call_method"
-    C.(
-      sd_bus
-      @-> string
-      @-> string
-      @-> string
-      @-> string
-      @-> ptr Sd_bus_error.struct_t
-      @-> ptr sd_bus_message
-      @-> string  (* types = "s" *)
-      @-> string
-      @-> returning int)
-
-(* sd_bus_call_method for Properties.Get(s s) -> v. Two string args,
- * reply is a variant. *)
-(* same as the _ss variant above *)
-
-(* sd_bus_message_read: pull an object path (o) out of the reply from
- * GetUnit. *)
-let sd_bus_message_read_o =
-  foreign "sd_bus_message_read"
-    C.(
-      sd_bus_message
-      @-> string  (* types = "o" *)
-      @-> ptr (ptr_opt char)  (* char **value *)
-      @-> returning int)
-
-(* sd_bus_message_read for reading a variant string (v containing s).
- * libsystemd understands "v" specially: pass the inner type as an
- * extra argument. For a variant holding a single string, types="v"
- * expects: const char *contents, then the actual value. sd_bus's
- * `sd_bus_message_read` with "v" is tricky; we instead use
- * `sd_bus_message_read_basic` inside an `enter_container`. Simpler
- * route: read the reply as "v" using the helper variant below. *)
-
-(* Read a simple string from a message (types = "s"). *)
-let sd_bus_message_read_s =
-  foreign "sd_bus_message_read"
-    C.(
-      sd_bus_message
-      @-> string
-      @-> ptr (ptr_opt char)
-      @-> returning int)
-
-(* Same shape as [sd_bus_message_read_s], but for an object path (types = "o").
- * The sd-bus wire format is a length-prefixed string either way, but the
- * libsystemd reader is strict about the type code matching the container. *)
-let sd_bus_message_read_o_ptr =
-  foreign "sd_bus_message_read"
-    C.(
-      sd_bus_message
-      @-> string
-      @-> ptr (ptr_opt char)
-      @-> returning int)
-
-(* Container navigation for unpacking the variant returned by
- * org.freedesktop.DBus.Properties.Get. *)
-let sd_bus_message_enter_container =
-  foreign "sd_bus_message_enter_container"
-    C.(sd_bus_message @-> char @-> string @-> returning int)
-
-let sd_bus_message_exit_container =
-  foreign "sd_bus_message_exit_container"
-    C.(sd_bus_message @-> returning int)
 
 (* ------------------------------------------------------------------ *)
 (* Helpers                                                             *)
@@ -447,7 +394,6 @@ type subscriber_entry = {
 type t = {
   bus : sd_bus;
   sw : Eio.Switch.t;
-  env : Eio_unix.Stdenv.base;
   ffi : Ffi.t;
   (* Slots from sd_bus_add_match; unref on close. *)
   slots : sd_bus_slot list ref;
@@ -523,7 +469,7 @@ let dispatch_loop t =
         ()))
   done
 
-let connect ~sw env =
+let connect ~sw _env =
   let ffi = Ffi.get () in
   let bus_pp = C.allocate sd_bus sd_bus_null in
   let rc = ffi.sd_bus_default_user bus_pp in
@@ -542,7 +488,6 @@ let connect ~sw env =
     {
       bus;
       sw;
-      env;
       ffi;
       slots = ref [];
       subscribers = ref [];
@@ -575,7 +520,7 @@ let call_unit_op t ~op ~unit:u =
   with_error @@ fun err ->
   with_reply @@ fun reply ->
   let rc =
-    sd_bus_call_method_ss t.bus systemd1_dest systemd1_path manager_iface op
+    t.ffi.call_method_ss t.bus systemd1_dest systemd1_path manager_iface op
       err reply "ss" u "replace"
   in
   check_rc ~op ~unit:u ~err rc
@@ -588,7 +533,7 @@ let daemon_reload t =
   with_error @@ fun err ->
   with_reply @@ fun reply ->
   let rc =
-    sd_bus_call_method_no_args t.bus systemd1_dest systemd1_path
+    t.ffi.call_method_no_args t.bus systemd1_dest systemd1_path
       manager_iface "Reload" err reply ""
   in
   check_rc ~op:"Reload" ~unit:"-" ~err rc
@@ -598,7 +543,7 @@ let manager_subscribe t =
   with_error @@ fun err ->
   with_reply @@ fun reply ->
   let rc =
-    sd_bus_call_method_no_args t.bus systemd1_dest systemd1_path
+    t.ffi.call_method_no_args t.bus systemd1_dest systemd1_path
       manager_iface "Subscribe" err reply ""
   in
   check_rc ~op:"Subscribe" ~unit:"-" ~err rc
@@ -608,7 +553,7 @@ let manager_unsubscribe_best_effort t =
   with_error @@ fun err ->
   with_reply @@ fun reply ->
   let _rc =
-    sd_bus_call_method_no_args t.bus systemd1_dest systemd1_path
+    t.ffi.call_method_no_args t.bus systemd1_dest systemd1_path
       manager_iface "Unsubscribe" err reply ""
   in
   ()
@@ -622,7 +567,7 @@ let reset_failed_unit t ~unit:u =
   with_error @@ fun err ->
   with_reply @@ fun reply ->
   let _rc =
-    sd_bus_call_method_s t.bus systemd1_dest systemd1_path manager_iface
+    t.ffi.call_method_s t.bus systemd1_dest systemd1_path manager_iface
       "ResetFailedUnit" err reply "s" u
   in
   ()
@@ -632,14 +577,14 @@ let get_unit_path t ~unit:u =
   with_error @@ fun err ->
   with_reply @@ fun reply ->
   let rc =
-    sd_bus_call_method_s t.bus systemd1_dest systemd1_path manager_iface
+    t.ffi.call_method_s t.bus systemd1_dest systemd1_path manager_iface
       "GetUnit" err reply "s" u
   in
   check_rc ~op:"GetUnit" ~unit:u ~err rc;
   let reply_msg = C.( !@ ) reply in
   read_cstring_out (fun out ->
       fail_on_neg_rc ~op:"GetUnit/read" ~unit:u
-        (sd_bus_message_read_o reply_msg "o" out))
+        (t.ffi.message_read_cstr reply_msg "o" out))
 
 (* Properties.Get(unit_iface, "ActiveState") on the unit path. Returns
  * the string from the variant. *)
@@ -647,7 +592,7 @@ let read_active_state t ~unit:u ~path =
   with_error @@ fun err ->
   with_reply @@ fun reply ->
   let rc =
-    sd_bus_call_method_ss t.bus systemd1_dest path props_iface "Get" err
+    t.ffi.call_method_ss t.bus systemd1_dest path props_iface "Get" err
       reply "ss" unit_iface "ActiveState"
   in
   check_rc ~op:"Properties.Get" ~unit:u ~err rc;
@@ -655,13 +600,13 @@ let read_active_state t ~unit:u ~path =
   (* reply is a single variant `v` containing `s`. Enter the v container,
    * read the s, exit. *)
   fail_on_neg_rc ~op:"ActiveState/enter_container" ~unit:u
-    (sd_bus_message_enter_container reply_msg 'v' "s");
+    (t.ffi.message_enter_container reply_msg 'v' "s");
   let s =
     read_cstring_out (fun out ->
         fail_on_neg_rc ~op:"ActiveState/read" ~unit:u
-          (sd_bus_message_read_s reply_msg "s" out))
+          (t.ffi.message_read_cstr reply_msg "s" out))
   in
-  let _ = sd_bus_message_exit_container reply_msg in
+  let _ = t.ffi.message_exit_container reply_msg in
   s
 
 let state_of_active_string ~unit:u = function
@@ -705,15 +650,15 @@ let read_job_path t ~unit:u ~path =
   with_error @@ fun err ->
   with_reply @@ fun reply ->
   let rc =
-    sd_bus_call_method_ss t.bus systemd1_dest path props_iface "Get" err
+    t.ffi.call_method_ss t.bus systemd1_dest path props_iface "Get" err
       reply "ss" unit_iface "Job"
   in
   check_rc ~op:"Properties.Get(Job)" ~unit:u ~err rc;
   let reply_msg = C.( !@ ) reply in
   fail_on_neg_rc ~op:"Job/enter_variant" ~unit:u
-    (sd_bus_message_enter_container reply_msg 'v' "(uo)");
+    (t.ffi.message_enter_container reply_msg 'v' "(uo)");
   fail_on_neg_rc ~op:"Job/enter_struct" ~unit:u
-    (sd_bus_message_enter_container reply_msg 'r' "uo");
+    (t.ffi.message_enter_container reply_msg 'r' "uo");
   (* Skip the u (jobId) via read_basic — the u32 payload never makes it
    * back to the caller; we only care about the object path. *)
   let u32 = C.allocate C.uint32_t Unsigned.UInt32.zero in
@@ -722,10 +667,10 @@ let read_job_path t ~unit:u ~path =
   let path_s =
     read_cstring_out (fun out ->
         fail_on_neg_rc ~op:"Job/read_o" ~unit:u
-          (sd_bus_message_read_o_ptr reply_msg "o" out))
+          (t.ffi.message_read_cstr reply_msg "o" out))
   in
-  let _ = sd_bus_message_exit_container reply_msg in
-  let _ = sd_bus_message_exit_container reply_msg in
+  let _ = t.ffi.message_exit_container reply_msg in
+  let _ = t.ffi.message_exit_container reply_msg in
   path_s
 
 let unit_job_pending t ~unit:u =

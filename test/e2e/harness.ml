@@ -485,11 +485,6 @@ let assert_unit_gone unit_filename =
     ~label:(Printf.sprintf "%s file gone" unit_filename)
     (unit_exists ~unit_filename)
 
-let assert_dropin_exists unit_filename =
-  assert_true
-    ~label:(Printf.sprintf "%s dropin exists" unit_filename)
-    (dropin_exists ~unit_filename)
-
 let assert_dropin_gone unit_filename =
   assert_false
     ~label:(Printf.sprintf "%s dropin gone" unit_filename)

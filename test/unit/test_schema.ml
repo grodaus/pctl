@@ -313,8 +313,6 @@ let test_error_rendering () =
         "sd-bus connect failed: no socket" );
       ( Unit_op_failed { op = "start"; unit_ = "x.service"; reply = "nope" },
         "systemctl start x.service failed: nope" );
-      ( Probe_exec_failed { service = "pg"; msg = "enoent" },
-        "probe for service pg failed to exec: enoent" );
       ( Probe_timeout { service = "pg"; timeout_ms = 1000 },
         "probe for service pg timed out after 1000 ms" );
       ( Identity_invalid { path = "/p"; reason = "bad" },
@@ -340,7 +338,6 @@ let test_error_exit_codes () =
       (Registry_io { id = ""; reason = "" }, 4);
       (Bus_connect_failed { msg = "" }, 5);
       (Unit_op_failed { op = ""; unit_ = ""; reply = "" }, 5);
-      (Probe_exec_failed { service = ""; msg = "" }, 6);
       (Probe_timeout { service = ""; timeout_ms = 0 }, 6);
     ]
   in

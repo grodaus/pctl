@@ -88,7 +88,6 @@
             ppx_deriving_yojson
             ppx_blob
             cmdliner
-            logs
             digestif
             # mtime — Phase 5 Probe module uses Mtime.span / Mtime.add_span
             # to compute per-fiber elapsed nanoseconds and per-service

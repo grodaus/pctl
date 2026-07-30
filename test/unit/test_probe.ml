@@ -210,13 +210,13 @@ let row ~state : Schema.result_row =
 let test_error_of_row_active () =
   Alcotest.(check bool)
     "Active → no error" true
-    (P.error_of_row (row ~state:`Active)
+    (Probe.error_of_row (row ~state:`Active)
        ~overall_timeout_seconds:5
      = None)
 
 let test_error_of_row_timed_out () =
   let err =
-    P.error_of_row (row ~state:`Timed_out)
+    Probe.error_of_row (row ~state:`Timed_out)
       ~overall_timeout_seconds:7
   in
   match err with
@@ -227,7 +227,7 @@ let test_error_of_row_timed_out () =
 
 let test_error_of_row_probe_failed () =
   let err =
-    P.error_of_row (row ~state:`Probe_failed)
+    Probe.error_of_row (row ~state:`Probe_failed)
       ~overall_timeout_seconds:3
   in
   match err with
@@ -238,7 +238,7 @@ let test_error_of_row_probe_failed () =
 
 let test_error_of_row_failed () =
   let err =
-    P.error_of_row (row ~state:`Failed)
+    Probe.error_of_row (row ~state:`Failed)
       ~overall_timeout_seconds:5
   in
   match err with
@@ -253,7 +253,7 @@ let test_error_of_row_failed () =
 
 let test_error_of_row_inactive () =
   let err =
-    P.error_of_row (row ~state:`Inactive)
+    Probe.error_of_row (row ~state:`Inactive)
       ~overall_timeout_seconds:5
   in
   match err with

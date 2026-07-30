@@ -84,10 +84,6 @@ let test_projects_crud () =
         "host after update" (Some "127.0.0.99") got.host;
       Alcotest.(check (option string))
         "session after update" (Some "boot-b") got.session_id);
-  (* get_by_path *)
-  (match Projects.get_by_path conn ~path:"/tmp/proj_2" with
-  | None -> Alcotest.fail "proj_2 not found by path"
-  | Some got -> Alcotest.(check string) "id by path" "proj_2" got.id);
   (* all returns both, ordered by id *)
   let xs = Projects.all conn in
   Alcotest.(check (list string))

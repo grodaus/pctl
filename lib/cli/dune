@@ -1,6 +1,5 @@
-; Per-command entrypoints. Each file (up/reload/down/restart/logs/status/
-; ls/init/gc_cmd/common) exposes a `run` function callable from
-; bin/pctl.ml cmdliner wiring.
+; Per-command entrypoints. `pipeline.ml` owns up/reload/down/restart/results;
+; host/logs/status/ls/init/gc_cmd each expose `run` for bin/pctl.ml.
 (library
  (name cli)
  (public_name pctl.cli)

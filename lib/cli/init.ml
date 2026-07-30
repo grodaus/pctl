@@ -100,7 +100,9 @@ let run ?(force = false) () : int =
       (* Copy flake.nix *)
       let flake_body = read_file src_flake in
       write_file target_flake flake_body;
-      (* Merge .gitignore if template exists. *)
+      (* Tracks whether we actually wrote: the template may be absent, or
+         every line already present. Neither should report an update. *)
+      let wrote_gitignore = ref false in
       if Sys.file_exists src_gitignore then begin
         let template_body = read_file src_gitignore in
         if Sys.file_exists target_gitignore then begin
@@ -123,10 +125,15 @@ let run ?(force = false) () : int =
             in
             Fun.protect
               ~finally:(fun () -> close_out oc)
-              (fun () -> output_string oc addition)
+              (fun () -> output_string oc addition);
+            wrote_gitignore := true
           end
         end
-        else write_file target_gitignore template_body
+        else begin
+          write_file target_gitignore template_body;
+          wrote_gitignore := true
+        end
       end;
       Printf.printf "pctl init: wrote %s\n" target_flake;
-      Printf.printf "pctl init: updated %s\n" target_gitignore)
+      if !wrote_gitignore then
+        Printf.printf "pctl init: updated %s\n" target_gitignore)

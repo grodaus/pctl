@@ -109,14 +109,8 @@ let build_child_env ~(id : Schema.project_id) ~(host : Schema.host) :
      :: Printf.sprintf "PCTL_HOST=%s" (Schema.Host.to_string host)
      :: parent)
 
-(* Run the probe command ONCE; return true iff exit-0. Any spawn error
- * (executable not found, ...) is treated as false — matches the
- * Nushell `probe-once` behaviour, which keeps the wait alive long
- * enough for a slow-to-appear readiness flag file to materialise.
- *
- * The child's stdout/stderr go to buffer sinks that we discard on exit.
- * We do NOT inherit parent stdout: [pctl results --json] must emit a
- * clean JSON array and a chatty probe would corrupt it. *)
+(* True iff exit-0. KNOWN BUG: the advertised "spawn errors count as false"
+ * catch was never written, so a missing executable kills the wait (pctl-j9k). *)
 let run_probe_once ~env ~(child_env : string array) ~(exec : string list) :
     bool =
   match exec with
@@ -127,6 +121,7 @@ let run_probe_once ~env ~(child_env : string array) ~(exec : string list) :
   | _ ->
       Eio.Switch.run @@ fun sw ->
       let proc_mgr = Eio.Stdenv.process_mgr env in
+      (* Discarded, not inherited: `pctl results --json` must stay clean JSON. *)
       let sink_buf = Buffer.create 64 in
       let sink = Eio.Flow.buffer_sink sink_buf in
       let proc =
@@ -134,6 +129,29 @@ let run_probe_once ~env ~(child_env : string array) ~(exec : string list) :
           ~env:child_env exec
       in
       match Eio.Process.await proc with `Exited 0 -> true | _ -> false
+
+(* Shared by [wait_all ~strategy:`Throw_first] and [pctl results] so both
+ * report a given terminal state identically. *)
+let error_of_row (r : Schema.result_row) ~overall_timeout_seconds :
+    Schema.error option =
+  match r.state with
+  | `Active -> None
+  | `Probe_failed | `Timed_out ->
+      Some
+        (Schema.Probe_timeout
+           { service = r.name; timeout_ms = overall_timeout_seconds * 1000 })
+  | (`Failed | `Inactive) as s ->
+      let label = match s with `Failed -> "failed" | `Inactive -> "inactive" in
+      Some
+        (Schema.Unit_op_failed
+           {
+             op = "wait";
+             unit_ = r.name;
+             reply =
+               Printf.sprintf
+                 "service %s terminated in state '%s' (expected 'active')"
+                 r.name label;
+           })
 
 (* ------------------------------------------------------------------ *)
 (* Functor over Systemctl.S — wait_service / wait_all.                  *)
@@ -267,33 +285,6 @@ module Make (M : Systemctl.S) = struct
          | `Deadline -> make_row `Timed_out `Unit_state)
 
   (* ---- Multi-service entry point ---------------------------------- *)
-
-  (* Build a Pctl_error appropriate for each non-Active outcome, used
-   * by `Throw_first`. The error message names the service and the
-   * terminal state — the Nushell oracle asserts both in
-   * wait_failed_oneshot_test and wait_overall_timeout_test. *)
-  let error_of_row (r : Schema.result_row) ~overall_timeout_seconds :
-      Schema.error option =
-    match r.state with
-    | `Active -> None
-    | `Probe_failed | `Timed_out ->
-        Some
-          (Schema.Probe_timeout
-             { service = r.name; timeout_ms = overall_timeout_seconds * 1000 })
-    | (`Failed | `Inactive) as s ->
-        let label =
-          match s with `Failed -> "failed" | `Inactive -> "inactive"
-        in
-        Some
-          (Schema.Unit_op_failed
-             {
-               op = "wait";
-               unit_ = r.name;
-               reply =
-                 Printf.sprintf
-                   "service %s terminated in state '%s' (expected 'active')"
-                   r.name label;
-             })
 
   let wait_all ~sw ~env ~(handle : M.t) ~(id : Schema.project_id)
       ~(host : Schema.host) ~(spec : Schema.spec) ~timeout_seconds

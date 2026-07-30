@@ -267,7 +267,6 @@ module Schema = struct
     | Install_failed       of { path : string; reason : string }
     | Bus_connect_failed   of { msg : string }
     | Unit_op_failed       of { op : string; unit : string; reply : string }
-    | Probe_exec_failed    of { service : string; msg : string }
     | Probe_timeout        of { service : string; timeout_ms : int }
     | Identity_invalid     of { path : string; reason : string }
     | Registry_io          of { id : string; reason : string }
@@ -276,6 +275,9 @@ module Schema = struct
   val error_exit_code : error -> int
 end
 ```
+
+A `Probe_exec_failed of { service; msg }` arm was dropped from this listing:
+nothing ever constructed it. Reinstating it is tracked by **pctl-j9k**.
 
 ## Systemctl port
 

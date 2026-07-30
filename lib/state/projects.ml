@@ -69,11 +69,6 @@ let get_by_id_req =
     "SELECT id, path, host, started_at, spec_file, session_id, spec_json \
      FROM projects WHERE id = ?"
 
-let get_by_path_req =
-  (string ->? row_type)
-    "SELECT id, path, host, started_at, spec_file, session_id, spec_json \
-     FROM projects WHERE path = ?"
-
 let all_req =
   (unit ->* row_type)
     "SELECT id, path, host, started_at, spec_file, session_id, spec_json \
@@ -108,11 +103,6 @@ let get_by_id ((module C : Caqti_eio.CONNECTION)) ~id : t option =
   match C.find_opt get_by_id_req id with
   | Ok v -> Option.map of_row v
   | Error e -> raise_io ~id e
-
-let get_by_path ((module C : Caqti_eio.CONNECTION)) ~path : t option =
-  match C.find_opt get_by_path_req path with
-  | Ok v -> Option.map of_row v
-  | Error e -> raise_io ~id:path e
 
 let all ((module C : Caqti_eio.CONNECTION)) : t list =
   match C.collect_list all_req () with

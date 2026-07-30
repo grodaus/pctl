@@ -17,11 +17,7 @@
  * Failure policy is hard-coded to match the oracle Nushell lifecycle:
  *   - stop_unit failures on [Removed] rows are tolerated (systemd may
  *     have already GCed the unit after its file was deleted);
- *   - start_unit / restart_unit / daemon_reload failures propagate.
- *
- * Drop-in hashing: phase 4 folds [dropin] into the main hash so a
- * host-change-only reload reports [Changed]. Today we hash the main
- * bytes alone, matching [Install]'s phase-0 behaviour. *)
+ *   - start_unit / restart_unit / daemon_reload failures propagate. *)
 
 type ctx = {
   id : Schema.project_id;
@@ -31,14 +27,9 @@ type ctx = {
 
 type report = {
   diff : Schema.plan_row list;
-  manifest_before : Schema.manifest;
-  manifest_after : Schema.manifest;
   units_on_disk : int;
 }
 
-(* Hashing + drop-in body rendering — moved here from [Install] so the
-   render → hash → write pipeline lives in one place. [Install] keeps
-   copies until phase 5 deletes the module. *)
 let sha256_hex (bytes : string) : string =
   Digestif.SHA256.(digest_string bytes |> to_hex)
 
@@ -93,11 +84,7 @@ end
 module Make (M : Systemctl.S) (US : Unit_store.S) = struct
   module WA = Write_all (US)
 
-  type systemctl_handle = M.t
-  type unit_store_handle = US.t
-
-  (* Apply logic — absorbed from the old [Plan.Make] during phase 5.
-     Ordering is load-bearing:
+  (* Apply logic. Ordering is load-bearing:
        - [daemon_reload] frames every pass so systemd sees the new
          on-disk shape before any start/stop fires.
        - Slice rows run first so an [Added] slice is up before its
@@ -114,12 +101,6 @@ module Make (M : Systemctl.S) (US : Unit_store.S) = struct
     let n = String.length s in
     n >= 6 && String.sub s (n - 6) 6 = ".slice"
 
-  let sort_rows rows =
-    List.sort
-      (fun (a : Schema.plan_row) (b : Schema.plan_row) ->
-        Schema.Unit_filename.compare a.unit_ b.unit_)
-      rows
-
   let apply_row (handle : M.t) (r : Schema.plan_row) : unit =
     let unit_s = Schema.Unit_filename.to_string r.unit_ in
     match r.action with
@@ -133,7 +114,7 @@ module Make (M : Systemctl.S) (US : Unit_store.S) = struct
         with Schema.Pctl_error _ -> ())
 
   let apply_plan ~(handle : M.t) ~(rows : Schema.plan_row list) : unit =
-    let rows = sort_rows rows in
+    let rows = Plan.sort_rows rows in
     M.daemon_reload handle;
     let slices, services = List.partition is_slice_unit rows in
     List.iter (apply_row handle) slices;
@@ -186,12 +167,7 @@ module Make (M : Systemctl.S) (US : Unit_store.S) = struct
            manifest_before;
          M.daemon_reload handle);
     State.Projects.replace_manifest conn ~project_id:id_s ~rows:manifest_after;
-    {
-      diff;
-      manifest_before;
-      manifest_after;
-      units_on_disk = List.length manifest_after;
-    }
+    { diff; units_on_disk = List.length manifest_after }
 
   let up ~conn ~handle ~unit_store ~ctx ~(spec : Schema.spec) () : report =
     reload ~conn ~handle ~unit_store ~ctx ~spec:(Some spec) ()

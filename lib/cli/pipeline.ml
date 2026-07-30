@@ -1,8 +1,7 @@
 (* Pipeline — the common-case materializer.
  *
  * See pipeline.mli for the invariant contract. This file owns the
- * orchestration that used to be duplicated across
- * up/reload/down/restart/results and the helpers in common.ml.
+ * orchestration for up/reload/down/restart/results.
  *
  * Shape:
  *   - Top-level: port-agnostic helpers (resolve_path, caqti_stdenv,
@@ -76,32 +75,6 @@ let worst_row (rows : Schema.result_row list) : Schema.result_row option =
           if rank r.Schema.state > rank cur.Schema.state then Some r
           else acc)
     None rows
-
-let error_of_row (r : Schema.result_row) ~timeout_seconds : Schema.error =
-  match r.Schema.state with
-  | `Active | `Probe_failed | `Timed_out ->
-      Schema.Probe_timeout
-        { service = r.name; timeout_ms = timeout_seconds * 1000 }
-  | `Failed ->
-      Schema.Unit_op_failed
-        {
-          op = "wait";
-          unit_ = r.name;
-          reply =
-            Printf.sprintf
-              "service %s terminated in state 'failed' (expected 'active')"
-              r.name;
-        }
-  | `Inactive ->
-      Schema.Unit_op_failed
-        {
-          op = "wait";
-          unit_ = r.name;
-          reply =
-            Printf.sprintf
-              "service %s terminated in state 'inactive' (expected 'active')"
-              r.name;
-        }
 
 let format_human (rows : Schema.result_row list) : string =
   let buf = Buffer.create 128 in
@@ -387,11 +360,12 @@ module Make (P : PORTS) = struct
     in
     let out = if json then format_json rows ^ "\n" else format_human rows in
     print_string out;
-    match worst_row rows with
+    match
+      Option.bind (worst_row rows)
+        (Probe.error_of_row ~overall_timeout_seconds:timeout)
+    with
     | None -> ()
-    | Some r ->
-        raise
-          (Schema.Pctl_error (error_of_row r ~timeout_seconds:timeout))
+    | Some e -> raise (Schema.Pctl_error e)
 end
 
 (* ---- Production wiring -------------------------------------------- *)
