@@ -176,20 +176,63 @@ let test_reload_one_service_changed () =
          Schema.Unit_filename.equal row.unit_ (service_unit "web"))
        changed)
 
-let test_down_tolerates_stop_failure () =
+(* A slice stop that fails for any reason other than no-such-unit means
+   the cgroup cascade never fired: the services are still running. Down
+   must abort there rather than unload the slice and delete the unit
+   files, which would leave those processes alive in a cgroup with no
+   units left to manage them — invisible to [pctl status], unreachable
+   by [pctl down]. *)
+let test_down_propagates_stop_failure () =
   with_sandbox @@ fun ~sw:_ ~conn ~handle ~us ->
   let s = spec_of_services [ svc_simple "web" ] in
   let _ = L.up ~conn ~handle ~unit_store:us ~ctx ~spec:s () in
-  (* Arm the slice stop to raise. Lifecycle.down's [try … with
-     Pctl_error] must swallow it; down proceeds to remove files and
-     clear state. *)
   let slice_s = Schema.Unit_filename.to_string slice_unit in
   Systemctl.In_mem.fail_next_stop handle ~unit:slice_s
-    ~reason:"injected: dbus unavailable";
-  let r = L.down ~conn ~handle ~unit_store:us ~ctx () in
-  Alcotest.(check int) "down still cleared manifest" 0 r.units_on_disk;
+    ~reason:"org.freedesktop.DBus.Error.NoReply: Remote peer disconnected";
+  let raised =
+    try
+      let _ = L.down ~conn ~handle ~unit_store:us ~ctx () in
+      false
+    with Schema.Pctl_error (Schema.Unit_op_failed { op = "stop"; _ }) -> true
+  in
+  Alcotest.(check bool) "down raised Unit_op_failed" true raised;
+  (* The units the still-running services depend on must survive, both on
+     disk and in the persisted manifest, so a retried [pctl down] can
+     still find and stop them. *)
   Alcotest.(check int)
-    "store empty despite failure" 0
+    "units left in store" 2
+    (List.length (Unit_store.In_mem.list us));
+  Alcotest.(check int)
+    "manifest left intact" 2
+    (List.length
+       (State.Projects.load_manifest conn
+          ~project_id:(Schema.Project_id.to_string id)));
+  let row_after =
+    State.Projects.get_by_id conn ~id:(Schema.Project_id.to_string id)
+  in
+  match row_after with
+  | None -> Alcotest.fail "project row vanished after failed down"
+  | Some r ->
+      Alcotest.(check (option string))
+        "host still allocated"
+        (Some (Schema.Host.to_string host))
+        r.host
+
+(* The one stop failure down may ignore: the slice was never loaded, so
+   there is nothing to cascade and nothing still running. *)
+let test_down_tolerates_no_such_unit () =
+  with_sandbox @@ fun ~sw:_ ~conn ~handle ~us ->
+  let s = spec_of_services [ svc_simple "web" ] in
+  let _ = L.up ~conn ~handle ~unit_store:us ~ctx ~spec:s () in
+  let slice_s = Schema.Unit_filename.to_string slice_unit in
+  let reply =
+    Schema.no_such_unit_dbus_error ^ ": Unit " ^ slice_s ^ " not loaded."
+  in
+  Systemctl.In_mem.fail_next_stop handle ~unit:slice_s ~reason:reply;
+  let r = L.down ~conn ~handle ~unit_store:us ~ctx () in
+  Alcotest.(check int) "down cleared manifest" 0 r.units_on_disk;
+  Alcotest.(check int)
+    "store empty" 0
     (List.length (Unit_store.In_mem.list us))
 
 let test_up_fail_next_write () =
@@ -244,8 +287,10 @@ let () =
           Alcotest.test_case "reload drop-in only change" `Quick
             test_reload_dropin_only_change;
           Alcotest.test_case "down after up" `Quick test_down_after_up;
-          Alcotest.test_case "down tolerates stop failure" `Quick
-            test_down_tolerates_stop_failure;
+          Alcotest.test_case "down propagates stop failure" `Quick
+            test_down_propagates_stop_failure;
+          Alcotest.test_case "down tolerates no-such-unit stop" `Quick
+            test_down_tolerates_no_such_unit;
           Alcotest.test_case "up fail_next_write → Install_failed" `Quick
             test_up_fail_next_write;
         ] );

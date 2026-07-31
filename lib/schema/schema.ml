@@ -454,6 +454,23 @@ type result_row = {
 (* Errors                                                              *)
 (* ------------------------------------------------------------------ *)
 
+(* The D-Bus error name systemd answers with when a unit op names a unit
+ * it cannot load. [reply] is name-first whenever the sd_bus_error struct
+ * carried a name (Dbus.format_bus_reply; In_mem replays the reason a test
+ * injects), so a prefix test identifies the name.
+ *
+ * Callers use this to tolerate exactly the "there was nothing there"
+ * failure and propagate every other one. The two replies that carry no
+ * name — format_bus_reply's bare-message arm and its decoded-errno
+ * fallback for a transport failure — fail the test, which is the safe
+ * direction. *)
+let no_such_unit_dbus_error = "org.freedesktop.systemd1.NoSuchUnit"
+
+let is_no_such_unit = function
+  | Unit_op_failed { reply; _ } ->
+      String.starts_with ~prefix:no_such_unit_dbus_error reply
+  | _ -> false
+
 let render_error = function
   | Spec_not_found { path } -> Printf.sprintf "spec not found: %s" path
   | Spec_parse { path; msg } ->

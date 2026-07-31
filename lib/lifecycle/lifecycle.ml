@@ -17,6 +17,10 @@
  * Failure policy is hard-coded to match the oracle Nushell lifecycle:
  *   - stop_unit failures on [Removed] rows are tolerated (systemd may
  *     have already GCed the unit after its file was deleted);
+ *   - the down path's slice stop_unit tolerates ONLY a no-such-unit
+ *     reply; anything else propagates, because there the unit files are
+ *     still on disk and deleting them after a failed cascade orphans the
+ *     running processes;
  *   - start_unit / restart_unit / daemon_reload failures propagate. *)
 
 type ctx = {
@@ -149,7 +153,7 @@ module Make (M : Systemctl.S) (US : Unit_store.S) = struct
            diff;
          apply_plan ~handle ~rows:diff
      | None ->
-         (* tear-down path — preserves current pipeline.down ordering:
+         (* down path — preserves current pipeline.down ordering:
             stop the slice first so the cgroup cascade kills every
             service in it BEFORE we unload the slice from systemd's
             view, daemon_reload, remove files, daemon_reload. Skipping
@@ -159,8 +163,16 @@ module Make (M : Systemctl.S) (US : Unit_store.S) = struct
            Schema.Unit_filename.to_string
              (Schema.Unit_filename.slice ~id:ctx.id)
          in
+         (* Only a no-such-unit reply is tolerated — [pctl down] on a
+            project whose slice never loaded has nothing to cascade.
+            Every other stop failure means the cascade did NOT fire and
+            the services are still running, so it must propagate before
+            the three statements below unload the slice and delete every
+            unit file: that would leave those processes alive in a cgroup
+            with no units left to manage them, invisible to [pctl status]
+            and unreachable by [pctl down]. *)
          (try M.stop_unit handle ~unit:slice_unit
-          with Schema.Pctl_error _ -> ());
+          with Schema.Pctl_error e when Schema.is_no_such_unit e -> ());
          M.daemon_reload handle;
          List.iter
            (fun (uf, _hash) -> US.remove unit_store ~unit_:uf)
