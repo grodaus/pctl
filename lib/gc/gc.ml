@@ -27,6 +27,17 @@
  *   - Exit 0 on success; stderr-warn-and-proceed on per-row failure.
  *     Returns the first Pctl_error-worthy error code only if nothing
  *     else succeeded.
+ *
+ * Stop failure policy (shared by both, see [stop_or_propagate]):
+ *   - stop_unit tolerates ONLY a no-such-unit reply. Every other stop
+ *     failure means systemd did not even accept the stop job, so the
+ *     cgroup cascade cannot have fired and the services are still
+ *     running; it propagates out of [remove_project] BEFORE the unit
+ *     files are deleted.
+ *   - Both entry points iterate row by row, so a propagated failure
+ *     skips that one project — its units, manifest and registry row all
+ *     survive for a later retry — and the remaining projects are still
+ *     swept.
  *)
 
 let no_gc_env () : bool =
@@ -39,18 +50,45 @@ let class_of_row ~(boot_id : string) (row : State.Projects.t) : Schema.class_ =
     | Some s when s = boot_id && s <> "" -> Schema.Live
     | _ -> Schema.Orphan
 
+(* [Printexc.to_string] renders a Pctl_error as "Pctl_error(_)". The
+ * per-row warning is the only report a skipped project gets, so it has
+ * to name the actual failure. *)
+let describe_exn = function
+  | Schema.Pctl_error e -> Schema.render_error e
+  | e -> Printexc.to_string e
+
 (* Remove every unit file and drop-in for [row] from user.control and
- * stop the matching units on [handle]. Tolerates every failure; logs
- * to stderr so the user sees progress. *)
+ * stop the matching units on [handle]. Raises if a unit could not be
+ * stopped; tolerates every other failure and logs to stderr so the user
+ * sees progress. *)
 module Make (M : Systemctl.S) = struct
-  (* Catches used throughout remove_project — gc sweeps MUST be
-   * best-effort; a stale row with no units on disk shouldn't block
+  (* Catches used for the file/DB steps of remove_project — those MUST
+   * be best-effort; a stale row with no units on disk shouldn't block
    * removal of the DB row. We still narrow from [_] to the specific
    * failure modes we've observed: systemd not running (Unix_error),
-   * pctl-tracked errors (Pctl_error), and caqti wrappers (Failure). *)
+   * pctl-tracked errors (Pctl_error), and caqti wrappers (Failure).
+   * The stops are NOT in this bucket — see [stop_or_propagate]. *)
   let ignore_best_effort f =
     try f ()
     with Failure _ | Unix.Unix_error _ | Schema.Pctl_error _ -> ()
+
+  (* Only a no-such-unit reply is tolerated: nothing is loaded, so there
+   * is nothing to cascade and nothing left running. Any other failure
+   * propagates so [remove_project] aborts before deleting the unit
+   * files — deleting them when systemd would not even accept the stop
+   * leaves the processes alive in a cgroup with no units left to manage
+   * them, invisible to [pctl status] and unreachable by [pctl down] or
+   * a second [pctl gc].
+   *
+   * Measured under pctl-8sd on systemd 257: Manager.StopUnit on an
+   * unloaded .service answers NoSuchUnit, but on an unloaded .slice it
+   * SUCCEEDS (systemd synthesises fragment-less slices). So on this
+   * version the tolerated branch is reachable for the per-service stops
+   * below and not for the slice stop; it is kept for both as the
+   * documented intent, and exercised through the fake. *)
+  let stop_or_propagate (handle : M.t) ~(unit_ : string) : unit =
+    try M.stop_unit handle ~unit:unit_
+    with Schema.Pctl_error e when Schema.is_no_such_unit e -> ()
 
   let remove_project ~(conn : State.Db.t) ~(handle : M.t)
       (row : State.Projects.t) : unit =
@@ -64,12 +102,18 @@ module Make (M : Systemctl.S) = struct
     let slice_unit =
       Schema.Unit_filename.to_string (Schema.Unit_filename.slice ~id)
     in
-    ignore_best_effort (fun () -> M.stop_unit handle ~unit:slice_unit);
+    stop_or_propagate handle ~unit_:slice_unit;
     List.iter
       (fun (uf, _) ->
-        let unit_s = Schema.Unit_filename.to_string uf in
-        ignore_best_effort (fun () -> M.stop_unit handle ~unit:unit_s))
+        stop_or_propagate handle ~unit_:(Schema.Unit_filename.to_string uf))
       manifest;
+    (* Best-effort from here on. Note what the stops above do and do not
+     * establish: [call_unit_op] is a bare Manager.StopUnit(name,
+     * "replace") (dbus.ml:519-529), so a successful return means systemd
+     * ACCEPTED the stop job, not that the processes are gone. This is
+     * the ordering the down path already relies on; narrowing the catch
+     * only removes the case where the job was never accepted at all. A
+     * stale systemd view is recovered by the next daemon-reload. *)
     ignore_best_effort (fun () -> M.daemon_reload handle);
     (* Remove the actual unit files on disk. Unit_store.Fs.remove
      * tolerates non-existence already. *)
@@ -107,12 +151,11 @@ module Make (M : Systemctl.S) = struct
                 with e ->
                   Printf.eprintf
                     "pctl gc: warn — failed to sweep %s: %s\n" row.id
-                    (Printexc.to_string e))
+                    (describe_exn e))
             | Schema.Orphan | Schema.Live -> ())
           rows
       with e ->
-        Printf.eprintf "pctl gc: warn — sweep aborted: %s\n"
-          (Printexc.to_string e)
+        Printf.eprintf "pctl gc: warn — sweep aborted: %s\n" (describe_exn e)
 
   (* Explicit purge — `pctl gc --yes`. Removes every non-Live project
    * row. Returns the number of projects removed. Prints one "removed
@@ -131,7 +174,7 @@ module Make (M : Systemctl.S) = struct
               removed + 1
             with e ->
               Printf.eprintf "pctl gc: warn — failed to remove %s: %s\n"
-                row.id (Printexc.to_string e);
+                row.id (describe_exn e);
               removed))
       0 rows
 end

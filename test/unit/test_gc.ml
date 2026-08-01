@@ -56,6 +56,48 @@ let ids_sorted conn =
   |> List.map (fun (r : State.Projects.t) -> r.id)
   |> List.sort String.compare
 
+(* Materialise the slice + one service unit [remove_project] would stop
+   and delete for [id_s], both in the manifest and under the sandboxed
+   user.control, so a test can assert they survive a failed stop. *)
+let install_units conn ~id_s =
+  let id = Schema.Project_id.of_string_exn id_s in
+  let units =
+    [
+      Schema.Unit_filename.slice ~id;
+      Schema.Unit_filename.service ~id ~service:"web";
+    ]
+  in
+  State.Projects.replace_manifest conn ~project_id:id_s
+    ~rows:(List.map (fun uf -> (uf, "sha-" ^ id_s)) units);
+  let us = Unit_store.Fs.create () in
+  List.iter
+    (fun unit_ ->
+      Unit_store.Fs.write us ~unit_
+        { Unit_store.main = "[Unit]\n"; dropin = None })
+    units;
+  (* Precondition asserted, not assumed: the "files survive" and "files
+     deleted" assertions below both pass trivially against an empty
+     user.control, so a silently no-op install would turn these tests
+     into assertions about nothing. *)
+  let present = Unit_store.Fs.list us in
+  List.iter
+    (fun unit_ ->
+      if not (List.exists (Schema.Unit_filename.equal unit_) present) then
+        Alcotest.failf "fixture: %s was not installed for %s"
+          (Schema.Unit_filename.to_string unit_)
+          id_s)
+    units;
+  units
+
+let unit_names_on_disk () =
+  Unit_store.Fs.list (Unit_store.Fs.create ())
+  |> List.map Schema.Unit_filename.to_string
+  |> List.sort String.compare
+
+let slice_name_of id_s =
+  Schema.Unit_filename.to_string
+    (Schema.Unit_filename.slice ~id:(Schema.Project_id.of_string_exn id_s))
+
 (* ------------------------------------------------------------------ *)
 (* no_gc_env                                                           *)
 (* ------------------------------------------------------------------ *)
@@ -239,6 +281,86 @@ let test_purge_preserves_live_rows () =
     "only live row remains" [ "live" ]
     (ids_sorted conn)
 
+(* A slice stop that fails for any reason other than no-such-unit means
+   the cgroup cascade never fired: the project's services are still
+   running. [remove_project] must abort there rather than delete their
+   unit files — that would leave the processes alive in a cgroup with no
+   units left to manage them, unreachable by [pctl down] or a later
+   [pctl gc]. Because gc is a multi-row loop, the failure is reported
+   for that row only and the remaining projects are still purged. *)
+let stop_failure_reply = "org.freedesktop.DBus.Error.NoReply: Remote peer disconnected"
+
+(* The per-row warning is the only report a skipped project gets, so a
+   Pctl_error must render as itself, not as "Pctl_error(_)". *)
+let test_describe_exn_renders_pctl_error () =
+  let e =
+    Schema.Pctl_error
+      (Schema.Unit_op_failed
+         { op = "stop"; unit_ = "pctl-x.slice"; reply = stop_failure_reply })
+  in
+  Alcotest.(check string)
+    "renders the systemctl failure"
+    ("systemctl stop pctl-x.slice failed: " ^ stop_failure_reply)
+    (Gc.describe_exn e);
+  (* The property the helper exists for: the stdlib rendering drops the
+     payload, so the warning would name no unit and no reply. *)
+  Alcotest.(check bool)
+    "Printexc alone loses the reply" false
+    (Test_helpers.contains_substring (Printexc.to_string e)
+       stop_failure_reply)
+
+let test_purge_skips_row_whose_stop_fails () =
+  with_sandbox @@ fun ~sw:_ ~env:_ ~conn ~handle ~xdg ->
+  upsert_row conn ~id:"a_fails" ~path:xdg ~session_id:"stale" ();
+  upsert_row conn ~id:"b_ok" ~path:xdg ~session_id:"stale" ();
+  let kept = install_units conn ~id_s:"a_fails" in
+  let _ = install_units conn ~id_s:"b_ok" in
+  Systemctl.In_mem.fail_next_stop handle ~unit:(slice_name_of "a_fails")
+    ~reason:stop_failure_reply;
+  let removed = G.purge ~conn ~handle in
+  Alcotest.(check int) "only the healthy row counted as removed" 1 removed;
+  Alcotest.(check (list string))
+    "failed row survives for a later retry" [ "a_fails" ] (ids_sorted conn);
+  Alcotest.(check (list string))
+    "its unit files survive too"
+    (List.sort String.compare
+       (List.map Schema.Unit_filename.to_string kept))
+    (unit_names_on_disk ());
+  Alcotest.(check int)
+    "and its manifest is intact" 2
+    (List.length (State.Projects.load_manifest conn ~project_id:"a_fails"))
+
+(* The one stop failure gc may ignore: the unit was never loaded, so
+   there is nothing to cascade and nothing still running. *)
+let test_purge_tolerates_no_such_unit_stop () =
+  with_sandbox @@ fun ~sw:_ ~env:_ ~conn ~handle ~xdg ->
+  upsert_row conn ~id:"a_orphan" ~path:xdg ~session_id:"stale" ();
+  let _ = install_units conn ~id_s:"a_orphan" in
+  let slice = slice_name_of "a_orphan" in
+  Systemctl.In_mem.fail_next_stop handle ~unit:slice
+    ~reason:(Schema.no_such_unit_dbus_error ^ ": Unit " ^ slice ^ " not loaded.");
+  let removed = G.purge ~conn ~handle in
+  Alcotest.(check int) "row still purged" 1 removed;
+  Alcotest.(check (list string)) "DB is empty" [] (ids_sorted conn);
+  Alcotest.(check (list string)) "unit files deleted" [] (unit_names_on_disk ())
+
+let test_sweep_skips_row_whose_stop_fails () =
+  with_sandbox @@ fun ~sw:_ ~env:_ ~conn ~handle ~xdg:_ ->
+  upsert_row conn ~id:"a_fails" ~path:"/no/such/path" ~session_id:"stale" ();
+  upsert_row conn ~id:"b_ok" ~path:"/no/such/path" ~session_id:"stale" ();
+  let kept = install_units conn ~id_s:"a_fails" in
+  let _ = install_units conn ~id_s:"b_ok" in
+  Systemctl.In_mem.fail_next_stop handle ~unit:(slice_name_of "a_fails")
+    ~reason:stop_failure_reply;
+  G.opportunistic_sweep ~conn ~handle;
+  Alcotest.(check (list string))
+    "failed row survives, sibling still swept" [ "a_fails" ] (ids_sorted conn);
+  Alcotest.(check (list string))
+    "its unit files survive"
+    (List.sort String.compare
+       (List.map Schema.Unit_filename.to_string kept))
+    (unit_names_on_disk ())
+
 let () =
   Alcotest.run "pctl gc"
     [
@@ -274,6 +396,8 @@ let () =
           Alcotest.test_case "PCTL_NO_GC disables" `Quick
             test_sweep_respects_pctl_no_gc;
           Alcotest.test_case "empty DB" `Quick test_sweep_noop_when_empty;
+          Alcotest.test_case "stop failure skips only that row" `Quick
+            test_sweep_skips_row_whose_stop_fails;
         ] );
       ( "purge",
         [
@@ -281,5 +405,14 @@ let () =
             test_purge_removes_orphan_and_unknown;
           Alcotest.test_case "preserves Live" `Quick
             test_purge_preserves_live_rows;
+          Alcotest.test_case "stop failure skips only that row" `Quick
+            test_purge_skips_row_whose_stop_fails;
+          Alcotest.test_case "tolerates no-such-unit stop" `Quick
+            test_purge_tolerates_no_such_unit_stop;
+        ] );
+      ( "describe_exn",
+        [
+          Alcotest.test_case "renders Pctl_error" `Quick
+            test_describe_exn_renders_pctl_error;
         ] );
     ]
