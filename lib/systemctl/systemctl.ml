@@ -13,3 +13,8 @@ module type S = Systemctl_intf.SYSTEMCTL
 
 module In_mem = In_mem
 module Dbus = Dbus
+
+(* Retry policy for bus calls whose peer went away mid-call. Exposed
+ * because it is pure and unit-tested on its own; [Dbus] is its only
+ * production caller. *)
+module Bus_retry = Bus_retry

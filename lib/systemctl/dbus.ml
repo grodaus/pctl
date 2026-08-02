@@ -102,10 +102,13 @@ module Sd_bus_error = struct
         done;
         Some (Bytes.unsafe_to_string b)
 
-  (* (name, message) — either field may be NULL. sd-bus populates name
-   * for D-Bus-level errors (e.g. org.freedesktop.systemd1.NoSuchUnit)
-   * and message for libsystemd-generated complaints; transport failures
-   * often leave both unset. *)
+  (* (name, message) — either field may be NULL, hence the options. In
+   * practice sd-bus names every failure it reports: an error reply
+   * carries the peer's name (e.g. org.freedesktop.systemd1.NoSuchUnit),
+   * and a locally-generated failure goes through
+   * sd_bus_error_set_errno, which always sets one. See
+   * [Bus_retry.is_peer_gone] for why the classifier nonetheless keeps
+   * a [None] arm. *)
   let parts s = (decode (C.getf s name_f), decode (C.getf s message_f))
 end
 
@@ -334,8 +337,14 @@ let format_sd_bus_err op rc =
 (* Format whatever sd-bus gave us on a failed call. If the sd_bus_error
  * struct was populated we prefer its name + message (grep-friendly
  * D-Bus error names like org.freedesktop.systemd1.NoSuchUnit come
- * through here). Transport-level failures often leave the struct empty
- * — in that case we fall back to decoding the raw errno. *)
+ * through here).
+ *
+ * Transport failures do NOT leave the struct empty: every [fail:] path
+ * in sd_bus_call_methodv / sd_bus_call runs sd_bus_error_set_errno, so
+ * even a closed bus arrives named ("System.Error.ENOTCONN"). The
+ * [None, None] arm is therefore near-unreachable and the errno decode
+ * is a backstop, not the usual transport case — see [Bus_retry], which
+ * classifies on that same name. *)
 let format_bus_reply ~op ~err rc =
   match Sd_bus_error.parts (C.( !@ ) err) with
   | Some name, Some message -> Printf.sprintf "%s: %s" name message
@@ -395,6 +404,9 @@ type t = {
   bus : sd_bus;
   sw : Eio.Switch.t;
   ffi : Ffi.t;
+  (* Monotonic clock, kept for [Bus_retry]'s elapsed-time budget. Same
+   * source as [Probe]'s deadlines — see lib/probe/probe.ml. *)
+  mono : Eio.Time.Mono.ty Eio.Std.r;
   (* Slots from sd_bus_add_match; unref on close. *)
   slots : sd_bus_slot list ref;
   (* Subscribers keyed by unit-name prefix; handler fires all matching
@@ -469,7 +481,7 @@ let dispatch_loop t =
         ()))
   done
 
-let connect ~sw _env =
+let connect ~sw env =
   let ffi = Ffi.get () in
   let bus_pp = C.allocate sd_bus sd_bus_null in
   let rc = ffi.sd_bus_default_user bus_pp in
@@ -489,6 +501,7 @@ let connect ~sw _env =
       bus;
       sw;
       ffi;
+      mono = (env#mono_clock :> Eio.Time.Mono.ty Eio.Std.r);
       slots = ref [];
       subscribers = ref [];
       callback_roots = ref [];
@@ -529,14 +542,56 @@ let start_unit t ~unit:u = call_unit_op t ~op:"StartUnit" ~unit:u
 let stop_unit t ~unit:u = call_unit_op t ~op:"StopUnit" ~unit:u
 let restart_unit t ~unit:u = call_unit_op t ~op:"RestartUnit" ~unit:u
 
+(* Manager.Reload is idempotent, so a call whose peer vanished can
+ * simply be re-issued. That is worth doing here because the peer
+ * vanishing is routine on this platform: every NixOS / home-manager
+ * activation reexecs the user manager, and pctl reloads twice per [up]
+ * (the pair bracketing [Lifecycle.apply_plan]) plus two more for each
+ * project the gc sweep removes. See [Bus_retry] for the failure
+ * signature and for why the retry is bounded by elapsed time rather
+ * than by attempt count. *)
 let daemon_reload t =
-  with_error @@ fun err ->
-  with_reply @@ fun reply ->
-  let rc =
-    t.ffi.call_method_no_args t.bus systemd1_dest systemd1_path
-      manager_iface "Reload" err reply ""
+  let now () = Eio.Time.Mono.now t.mono in
+  let started = now () in
+  let attempts = ref 0 in
+  let attempt () =
+    incr attempts;
+    with_error @@ fun err ->
+    with_reply @@ fun reply ->
+    let rc =
+      t.ffi.call_method_no_args t.bus systemd1_dest systemd1_path
+        manager_iface "Reload" err reply ""
+    in
+    if rc >= 0 then Ok ()
+    else
+      (* Decode inside the [with_error] scope — its finaliser frees the
+       * struct both fields point into. The retry classifies on the
+       * name; [reply] is only ever rendered. *)
+      let name, _ = Sd_bus_error.parts (C.( !@ ) err) in
+      Error (name, format_bus_reply ~op:"Reload" ~err rc)
   in
-  check_rc ~op:"Reload" ~unit:"-" ~err rc
+  match
+    Bus_retry.with_retry ~now ~sleep:(Eio.Time.Mono.sleep t.mono)
+      ~budget:Bus_retry.peer_gone_budget ~delay:Bus_retry.peer_gone_delay
+      ~retry_on:(fun (name, _) -> Bus_retry.is_peer_gone name)
+      attempt
+  with
+  | Ok () -> ()
+  | Error (_, reply) ->
+      (* Say so when the budget was spent, so an immediate rejection and
+       * a five-second exhausted retry are distinguishable. Callers that
+       * discard the error still get the seconds in the message —
+       * [Gc.opportunistic_sweep] swallows this one entirely. *)
+      let reply =
+        if !attempts > 1 then
+          Printf.sprintf "%s (gave up after %d attempts over %.1fs)" reply
+            !attempts
+            (Bus_retry.seconds_since started (now ()))
+        else reply
+      in
+      raise
+        (Schema.Pctl_error
+           (Schema.Unit_op_failed { op = "Reload"; unit_ = "-"; reply }))
 
 (* See [install_match_rule_and_fiber] for why this is required. *)
 let manager_subscribe t =

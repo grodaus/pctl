@@ -15,6 +15,7 @@ OCaml single binary driven by `dune`. Nix-side library stays in `nix/lib/` as th
 - `nix/lib/` — `mkProject.nix`, `types.nix`, `sandbox-defaults.nix`, `default.nix`. Emits `spec.json` via `pkgs.writeText`; OCaml consumes it.
 - `migrations/` — SQL applied at startup.
 - `templates/init/` — scaffold for `pctl init`.
+- `scripts/` — dev-loop helpers that are not part of the build. `e2e-repeat.sh` is the only one; see Tests.
 - `docs/src/plans/20260419-ocaml-rewrite.md` — architecture + locked decisions.
 
 ## Tests
@@ -29,5 +30,8 @@ Run with:
 
 - `dune test` runs the two sandbox-safe layers (unit + integration). The same suite is surfaced by the `ocaml-tests` check in `nix flake check`.
 - `dune build @e2e` (or `dune build @e2e --force` to re-run) runs the real-systemd suite on the host. Run it before claiming any e2e-affecting change works — when working interactively, a live user session is the norm, not the exception.
+- `scripts/e2e-repeat.sh [runs]` runs that suite N times (default 5) and reports the pass rate. One green `dune build @e2e` is not evidence the gate is stable — the script's header says why. Use this before claiming it is. It exits 2, not 0, if the runs were skipped rather than executed.
 
 Each reality test uses a unique tmpdir → unique **project id** → unique **slice**, so tests don't collide with each other or with the dev's real projects on the same session. `Harness.teardown` (run via `with_scratch`) takes the project down and clears any `failed` tombstone on its slice.
+
+`test_reload_survives_reexec` is the exception to "tests only touch their own slice": it runs `systemctl --user daemon-reexec` twice against the live session, which is what a `nixos-rebuild switch` does and which running units survive.

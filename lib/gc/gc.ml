@@ -109,8 +109,8 @@ module Make (M : Systemctl.S) = struct
       manifest;
     (* Best-effort from here on. Note what the stops above do and do not
      * establish: [call_unit_op] is a bare Manager.StopUnit(name,
-     * "replace") (dbus.ml:519-529), so a successful return means systemd
-     * ACCEPTED the stop job, not that the processes are gone. This is
+     * "replace"), so a successful return means systemd ACCEPTED the
+     * stop job, not that the processes are gone. This is
      * the ordering the down path already relies on; narrowing the catch
      * only removes the case where the job was never accepted at all. A
      * stale systemd view is recovered by the next daemon-reload. *)

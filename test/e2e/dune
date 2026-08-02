@@ -28,16 +28,16 @@
         test_results test_host test_up_no_block test_up_no_wait
         test_logs test_status test_list test_gc
         test_gc_explicit test_pctl_no_gc test_dbus_subscribe
-        test_depends_on_wait)
+        test_depends_on_wait test_reload_survives_reexec)
  (modules test_up test_up_idempotent test_reload test_down test_worktree
           test_workspace test_wait_active test_wait_probe test_wait_timeout
           test_down_missing_units
           test_results test_host test_up_no_block test_up_no_wait
           test_logs test_status test_list test_gc
           test_gc_explicit test_pctl_no_gc test_dbus_subscribe
-          test_depends_on_wait)
+          test_depends_on_wait test_reload_survives_reexec)
  (libraries e2e_harness schema identity unit_store cli state systemctl yojson
-            str eio eio_main eio.unix alcotest unix))
+            str eio eio_main eio.unix alcotest unix mtime mtime.clock.os))
 
 ; IMPORTANT: all tests run against the SAME systemd --user session.
 ; Dune parallelises alias dependencies by default, which would cause
@@ -57,7 +57,7 @@
        test_up_no_wait.exe
        test_logs.exe test_status.exe test_list.exe test_gc.exe
        test_gc_explicit.exe test_pctl_no_gc.exe
-       test_depends_on_wait.exe)
+       test_depends_on_wait.exe test_reload_survives_reexec.exe)
  (action
   (progn
    (run ./test_dbus_smoke.exe)
@@ -82,4 +82,8 @@
    (run ./test_gc.exe)
    (run ./test_gc_explicit.exe)
    (run ./test_pctl_no_gc.exe)
-   (run ./test_depends_on_wait.exe))))
+   (run ./test_depends_on_wait.exe)
+   ; Last: this one reexecs the user manager — the only test that touches
+   ; anything outside its own slice. Nothing after it should need the
+   ; manager to have stayed put.
+   (run ./test_reload_survives_reexec.exe))))
