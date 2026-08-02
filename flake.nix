@@ -147,13 +147,12 @@
         packages.pctl = pctlPkg;
         packages.default = pctlPkg;
 
-        # `ci` devShell: dune + all pctl build/test inputs. Used by
-        # .forgejo/workflows/ci.yml for the e2e job:
-        #   nix develop .#ci --command dune runtest --force --alias e2e
-        # `inputsFrom = [pctlPkg]` reuses the same build/propagated/check
-        # inputs the package declares, so this shell cannot drift from
-        # the package's dep list.
-        devShells.ci = pkgs.mkShell {
+        # dune + all pctl build/test inputs. Entered by direnv, by a
+        # bare `nix develop`, and by .forgejo/workflows/ci.yml's e2e
+        # job. `inputsFrom = [pctlPkg]` reuses the same
+        # build/propagated/check inputs the package declares, so this
+        # shell cannot drift from the package's dep list.
+        devShells.default = pkgs.mkShell {
           inputsFrom = [pctlPkg];
           nativeBuildInputs = [
             ocamlPackages.dune_3
