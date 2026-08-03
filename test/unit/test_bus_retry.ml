@@ -1,12 +1,12 @@
-(* Bus_retry — the retry policy that keeps a Manager.Reload alive across
- * a `systemctl --user daemon-reexec`.
+(* Bus_retry — the retry loop that keeps a Manager.Reload alive across a
+ * `systemctl --user daemon-reexec`.
  *
- * The policy has two halves and both are tested here:
- *   - [is_peer_gone], which classifies a D-Bus error NAME (never a
- *     display string);
- *   - [with_retry], whose budget is wall-clock rather than an attempt
- *     count, because a retryable attempt has no fixed cost — see
- *     [Bus_retry]'s header. *)
+ * Only [with_retry] is tested here: its budget is wall-clock rather than
+ * an attempt count, because a retryable attempt has no fixed cost — see
+ * [Bus_retry]'s header. WHICH errors are retryable is
+ * [Bus_errors.is_peer_gone], tested in test_bus_errors.ml; it is wired in
+ * here as [retry_on] so the two halves are exercised as the caller
+ * composes them. *)
 
 open Systemctl
 
@@ -31,7 +31,7 @@ let delay = 0.25
 let run ~now ~sleep ~retry_on f =
   Bus_retry.with_retry ~now ~sleep ~budget ~delay ~retry_on f
 
-let retry_on_name = Bus_retry.is_peer_gone
+let retry_on_name = Bus_errors.is_peer_gone
 
 let float_list = Alcotest.(list (float 0.0001))
 let result_s = Alcotest.(result string (option string))
@@ -106,32 +106,6 @@ let test_slow_failure_is_not_retried () =
   Alcotest.(check int) "no retry" 1 !calls;
   Alcotest.check float_list "never slept" [] (slept ())
 
-(* Names are matched exactly, not by prefix: the classifier must not be
- * coupled to how the reply is later rendered for humans. *)
-let test_is_peer_gone_classification () =
-  let check expect name =
-    Alcotest.(check bool)
-      (Printf.sprintf "is_peer_gone %s"
-         (match name with None -> "<none>" | Some s -> s))
-      expect (Bus_retry.is_peer_gone name)
-  in
-  check true (Some "org.freedesktop.DBus.Error.NoReply");
-  check true (Some "org.freedesktop.DBus.Error.ServiceUnknown");
-  check true (Some "org.freedesktop.DBus.Error.NameHasNoOwner");
-  check false (Some "org.freedesktop.systemd1.NoSuchUnit");
-  check false (Some "org.freedesktop.DBus.Error.AccessDenied");
-  check false (Some "org.freedesktop.DBus.Error.NoReplyXxx");
-  (* Names our own dead socket, not an absent peer — see
-   * [peer_gone_error_names]. *)
-  check false (Some "org.freedesktop.DBus.Error.Disconnected");
-  (* The shape a transport failure actually takes: sd_bus_error_set_errno
-   * names it rather than leaving the struct empty. *)
-  check false (Some "System.Error.ENOTCONN");
-  check false (Some "org.freedesktop.DBus.Error.Failed");
-  (* Effectively unreachable through sd_bus_call_method; covered so the
-   * total match stays honest. *)
-  check false None
-
 let () =
   Alcotest.run "bus_retry"
     [
@@ -147,10 +121,5 @@ let () =
             `Quick test_gives_up_when_budget_exhausted;
           Alcotest.test_case "a slow failure is not retried" `Quick
             test_slow_failure_is_not_retried;
-        ] );
-      ( "is_peer_gone",
-        [
-          Alcotest.test_case "classifies by exact error name" `Quick
-            test_is_peer_gone_classification;
         ] );
     ]

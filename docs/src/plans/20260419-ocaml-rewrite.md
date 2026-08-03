@@ -266,7 +266,8 @@ module Schema = struct
     | Nix_build_failed     of { expr : string; exit : int; stderr : string }
     | Install_failed       of { path : string; reason : string }
     | Bus_connect_failed   of { msg : string }
-    | Unit_op_failed       of { op : string; unit : string; reply : string }
+    | Unit_op_failed       of { op : string; unit : string;
+                                error_name : string option; reply : string }
     | Probe_timeout        of { service : string; timeout_ms : int }
     | Identity_invalid     of { path : string; reason : string }
     | Registry_io          of { id : string; reason : string }

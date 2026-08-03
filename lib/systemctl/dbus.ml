@@ -334,39 +334,54 @@ let format_sd_bus_err op rc =
   | Some hint -> base ^ " — " ^ hint
   | None -> base
 
-(* Format whatever sd-bus gave us on a failed call. If the sd_bus_error
- * struct was populated we prefer its name + message (grep-friendly
- * D-Bus error names like org.freedesktop.systemd1.NoSuchUnit come
- * through here).
+(* Render whatever sd-bus gave us on a failed call, for humans. The name
+ * goes first when there is one, so a log line leads with the
+ * grep-friendly D-Bus name; classification uses the name field on the
+ * error, never this string.
  *
  * Transport failures do NOT leave the struct empty: every [fail:] path
  * in sd_bus_call_methodv / sd_bus_call runs sd_bus_error_set_errno, so
  * even a closed bus arrives named ("System.Error.ENOTCONN"). The
  * [None, None] arm is therefore near-unreachable and the errno decode
- * is a backstop, not the usual transport case — see [Bus_retry], which
- * classifies on that same name. *)
-let format_bus_reply ~op ~err rc =
-  match Sd_bus_error.parts (C.( !@ ) err) with
+ * is a backstop, not the usual transport case — see [Bus_errors]. *)
+let format_bus_reply ~op ~parts rc =
+  match parts with
   | Some name, Some message -> Printf.sprintf "%s: %s" name message
   | None, Some message -> message
   | Some name, None -> name ^ " (no message)"
   | None, None -> format_sd_bus_err op rc
 
+(* The error a failed sd-bus call becomes: the name for callers to
+ * classify on, the formatted reply for callers to print. Decoded inside
+ * the [with_error] scope — the struct both fields point into is freed by
+ * its finaliser. *)
+let bus_error ~op ~unit:u ~err rc =
+  let parts = Sd_bus_error.parts (C.( !@ ) err) in
+  Schema.Unit_op_failed
+    {
+      op;
+      unit_ = u;
+      error_name = fst parts;
+      reply = format_bus_reply ~op ~parts rc;
+    }
+
 let check_rc ~op ~unit:u ~err rc =
-  if rc < 0 then
-    raise
-      (Schema.Pctl_error
-         (Schema.Unit_op_failed
-            { op; unit_ = u; reply = format_bus_reply ~op ~err rc }))
+  if rc < 0 then raise (Schema.Pctl_error (bus_error ~op ~unit:u ~err rc))
 
 (* Raise Unit_op_failed if [rc < 0]. Used for non-sd_bus_error-populating
- * calls (e.g. message_read, enter_container). *)
+ * calls (e.g. message_read, enter_container) — there is no reply to take
+ * a name from, hence [error_name = None]. *)
 let fail_on_neg_rc ~op ~unit:u rc =
   if rc < 0 then
     raise
       (Schema.Pctl_error
          (Schema.Unit_op_failed
-            { op; unit_ = u; reply = format_sd_bus_err op rc }))
+            {
+              op;
+              unit_ = u;
+              error_name = None;
+              reply = format_sd_bus_err op rc;
+            }))
 
 let with_error f =
   let err = Sd_bus_error.make () in
@@ -441,14 +456,16 @@ let close t =
     if not (C.is_null t.bus) then ignore (t.ffi.sd_bus_unref t.bus)
   end
 
-(* Re-resolve a unit's state, tolerating errors (returns Inactive on
- * failure — same policy as [unit_state]). Declared as a forward ref
- * because the subscribe helper needs it before [unit_state]'s final
- * definition is in scope. We close over [t] and invoke it from the
- * signal handler. *)
+(* Re-resolve a unit's state for the signal handler, which runs inside
+ * libsystemd's dispatch frame and so cannot let an exception through.
+ * [None] means the read failed and the handler has nothing truthful to
+ * hand a subscriber — it reports and fires no callback, rather than
+ * passing off Inactive as the answer. Declared as a forward ref because
+ * the subscribe helper needs it before [unit_state]'s final definition
+ * is in scope. *)
 let safe_unit_state_forward :
-    (t -> unit:string -> Schema.state) ref =
-  ref (fun _ ~unit:_ -> Schema.Inactive)
+    (t -> unit:string -> Schema.state option) ref =
+  ref (fun _ ~unit:_ -> None)
 
 (* Background fiber: cooperatively process sd_bus events while the
  * handle is open. We use sd_bus_wait with a short timeout so the
@@ -563,35 +580,36 @@ let daemon_reload t =
         manager_iface "Reload" err reply ""
     in
     if rc >= 0 then Ok ()
-    else
-      (* Decode inside the [with_error] scope — its finaliser frees the
-       * struct both fields point into. The retry classifies on the
-       * name; [reply] is only ever rendered. *)
-      let name, _ = Sd_bus_error.parts (C.( !@ ) err) in
-      Error (name, format_bus_reply ~op:"Reload" ~err rc)
+    else Error (bus_error ~op:"Reload" ~unit:"-" ~err rc)
   in
   match
     Bus_retry.with_retry ~now ~sleep:(Eio.Time.Mono.sleep t.mono)
       ~budget:Bus_retry.peer_gone_budget ~delay:Bus_retry.peer_gone_delay
-      ~retry_on:(fun (name, _) -> Bus_retry.is_peer_gone name)
+      ~retry_on:(fun e -> Bus_errors.is_peer_gone (Bus_errors.error_name e))
       attempt
   with
   | Ok () -> ()
-  | Error (_, reply) ->
+  | Error e ->
       (* Say so when the budget was spent, so an immediate rejection and
        * a five-second exhausted retry are distinguishable. Callers that
        * discard the error still get the seconds in the message —
-       * [Gc.opportunistic_sweep] swallows this one entirely. *)
-      let reply =
-        if !attempts > 1 then
-          Printf.sprintf "%s (gave up after %d attempts over %.1fs)" reply
-            !attempts
-            (Bus_retry.seconds_since started (now ()))
-        else reply
+       * [Gc.opportunistic_sweep] swallows this one entirely. The count
+       * and the elapsed time are formatted into [reply] rather than
+       * carried as fields: no caller branches on them (pctl-nir). *)
+      let e =
+        match e with
+        | Schema.Unit_op_failed r when !attempts > 1 ->
+            Schema.Unit_op_failed
+              {
+                r with
+                reply =
+                  Printf.sprintf "%s (gave up after %d attempts over %.1fs)"
+                    r.reply !attempts
+                    (Bus_retry.seconds_since started (now ()));
+              }
+        | e -> e
       in
-      raise
-        (Schema.Pctl_error
-           (Schema.Unit_op_failed { op = "Reload"; unit_ = "-"; reply }))
+      raise (Schema.Pctl_error e)
 
 (* See [install_match_rule_and_fiber] for why this is required. *)
 let manager_subscribe t =
@@ -603,7 +621,11 @@ let manager_subscribe t =
   in
   check_rc ~op:"Subscribe" ~unit:"-" ~err rc
 
-(* Best-effort: systemd may have dropped the connection during shutdown. *)
+(* Every rc is dropped here, deliberately and unlike [reset_failed_unit]
+ * below: the sole caller is [close] (via [manager_unsubscribe_forward]),
+ * which is unwinding a handle. systemd may have dropped the connection
+ * during shutdown, and for any other rc there is no longer anything to
+ * do about it — [close] unrefs the bus a few statements later. *)
 let manager_unsubscribe_best_effort t =
   with_error @@ fun err ->
   with_reply @@ fun reply ->
@@ -615,17 +637,27 @@ let manager_unsubscribe_best_effort t =
 
 let () = manager_unsubscribe_forward := manager_unsubscribe_best_effort
 
-(* ResetFailedUnit(s) — clears the `failed` tombstone. Swallows
- * not-loaded/not-failed errors: callers use this best-effort, same as
- * `systemctl --user reset-failed` with a glob that matches nothing. *)
+(* ResetFailedUnit(s) — clears the `failed` tombstone.
+ *
+ * Tolerates exactly no-such-unit, i.e. nothing was loaded and so nothing
+ * carries a tombstone, matching `systemctl --user reset-failed` on a glob
+ * that matches nothing. Every other reply propagates: the caller's whole
+ * reason for calling is that the tombstone must be gone afterwards, and
+ * swallowing a transport failure here leaves it in place while telling
+ * the caller it was cleared.
+ *
+ * "Already not failed" is not a failure to tolerate — it succeeds. See
+ * [Bus_errors.no_such_unit] for both, checked on systemd 260.1. *)
 let reset_failed_unit t ~unit:u =
   with_error @@ fun err ->
   with_reply @@ fun reply ->
-  let _rc =
+  let rc =
     t.ffi.call_method_s t.bus systemd1_dest systemd1_path manager_iface
       "ResetFailedUnit" err reply "s" u
   in
-  ()
+  if rc < 0 then
+    let e = bus_error ~op:"ResetFailedUnit" ~unit:u ~err rc in
+    if not (Bus_errors.is_no_such_unit e) then raise (Schema.Pctl_error e)
 
 (* GetUnit(name) -> ObjectPath. *)
 let get_unit_path t ~unit:u =
@@ -678,17 +710,26 @@ let state_of_active_string ~unit:u = function
               {
                 op = "ActiveState/parse";
                 unit_ = u;
+                (* The call succeeded; this is our own decode refusing
+                 * the payload, so there is no reply name to carry. *)
+                error_name = None;
                 reply = Printf.sprintf "unknown ActiveState '%s'" other;
               }))
 
+(* Tolerate exactly the reply that means "no such unit is loaded", which
+ * for a lookup is information rather than a failure. Every other reply
+ * propagates: substituting a state for it would answer the caller with a
+ * plausible wrong value — a bus fault during a `daemon-reexec` window
+ * would report every unit as Inactive, i.e. a running service as
+ * stopped, with nothing anywhere saying a call had failed. *)
+let get_unit_path_opt t ~unit:u =
+  try Some (get_unit_path t ~unit:u)
+  with Schema.Pctl_error e when Bus_errors.is_no_such_unit e -> None
+
 let unit_state t ~unit:u =
-  (* GetUnit may fail with NoSuchUnit for a unit that has never been
-   * loaded. systemd's own `systemctl is-active` reports "inactive" in
-   * that case, so mirror that. We treat any exception on get_unit_path
-   * as "inactive". *)
-  match
-    try Some (get_unit_path t ~unit:u) with Schema.Pctl_error _ -> None
-  with
+  (* An unloaded unit is Inactive — what systemd's own `systemctl
+   * is-active` reports for it. *)
+  match get_unit_path_opt t ~unit:u with
   | None -> Schema.Inactive
   | Some path ->
       let s = read_active_state t ~unit:u ~path in
@@ -729,26 +770,29 @@ let read_job_path t ~unit:u ~path =
   path_s
 
 let unit_job_pending t ~unit:u =
-  (* Same NoSuchUnit tolerance as [unit_state]: an unloaded unit has no
-   * pending job. Any Pctl_error during the property read falls back to
-   * "no pending job" — we'd rather fail-fast on state than hang on a
-   * transient read error. *)
-  match
-    try Some (get_unit_path t ~unit:u) with Schema.Pctl_error _ -> None
-  with
+  (* Same no-such-unit tolerance as [unit_state]: an unloaded unit has no
+   * pending job. Nothing else is tolerated — "no job pending" is what
+   * [Probe] reads as "this Inactive unit is terminal", so a swallowed
+   * bus fault there ends the wait early and reports a service that
+   * systemd is about to start as having terminated (pctl-q2j). *)
+  match get_unit_path_opt t ~unit:u with
   | None -> false
-  | Some path ->
-      (try
-         let job_path = read_job_path t ~unit:u ~path in
-         job_path <> "/"
-       with Schema.Pctl_error _ -> false)
+  | Some path -> read_job_path t ~unit:u ~path <> "/"
 
 (* Wire the forward reference so the signal handler can re-read state
  * without a dependency cycle. *)
 let () =
   safe_unit_state_forward :=
     fun t ~unit:u ->
-      try unit_state t ~unit:u with Schema.Pctl_error _ -> Schema.Inactive
+      try Some (unit_state t ~unit:u)
+      with Schema.Pctl_error e ->
+        (* Cannot propagate — see [safe_unit_state_forward]. Reporting is
+         * what "must not escape" actually requires; discarding it left a
+         * bus fault indistinguishable from an inactive unit. *)
+        prerr_endline
+          (Printf.sprintf "pctl: re-reading state of %s failed: %s" u
+             (Schema.render_error e));
+        None
 
 (* ------------------------------------------------------------------ *)
 (* subscribe_unit_changes — minimal-but-complete implementation.
@@ -807,10 +851,19 @@ let install_match_rule_and_fiber t =
     let subs = !(t.subscribers) in
     List.iter
       (fun entry ->
-        let s =
-          (!safe_unit_state_forward) t ~unit:entry.unit_name
-        in
-        try entry.cb s with _ -> ())
+        match (!safe_unit_state_forward) t ~unit:entry.unit_name with
+        | None -> ()
+        | Some s -> (
+            (* A subscriber exception must not escape into the C dispatch
+             * frame, but "must not escape" is satisfied by reporting it.
+             * Discarding it silently loses e.g. a probe callback's own
+             * bus failure. *)
+            try entry.cb s
+            with e ->
+              prerr_endline
+                (Printf.sprintf
+                   "pctl: subscriber callback for %s raised: %s"
+                   entry.unit_name (Printexc.to_string e))))
       subs;
     0
   in

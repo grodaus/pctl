@@ -18,3 +18,7 @@ module Dbus = Dbus
  * because it is pure and unit-tested on its own; [Dbus] is its only
  * production caller. *)
 module Bus_retry = Bus_retry
+
+(* D-Bus error-name vocabulary + the classifiers over it. Exposed for
+ * [Lifecycle] and [Gc], which tolerate exactly a no-such-unit stop. *)
+module Bus_errors = Bus_errors

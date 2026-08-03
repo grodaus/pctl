@@ -29,9 +29,11 @@ type t = {
   states : (string, Schema.state) Hashtbl.t;
   subscribers : (string, subscriber list ref) Hashtbl.t;
   fail_next : (string, unit) Hashtbl.t;
-  fail_next_stop : (string, string) Hashtbl.t;
-      (* unit → reason for next stop_unit. One-shot: the entry is
-         removed on fire so repeated calls don't keep raising. *)
+  fail_next_stop : (string, string option * string) Hashtbl.t;
+      (* unit → (error_name, reply) for the next stop_unit. One-shot: the
+         entry is removed on fire so repeated calls don't keep raising.
+         The name is what [Bus_errors] classifies on, so a test injecting
+         a failure must say which one it is injecting. *)
   pending_jobs : (string, unit) Hashtbl.t;
       (* unit → pending start-job marker. Test fixtures toggle this to
          model systemd's behaviour on units with Requires=: StartUnit
@@ -67,13 +69,14 @@ let notify t u state =
   List.iter
     (fun cb ->
       Eio.Fiber.fork ~sw:t.sw (fun () ->
+          (* Report and continue, which is what the Dbus handler does with
+           * a raising subscriber (see [Dbus.install_match_rule_and_fiber]).
+           * Neither adapter may let it reach the mutator. *)
           try cb state
-          with _ ->
-            (* Tests don't want subscriber exceptions to crash the
-             * suite. In production the only caller is [Probe], which
-             * must propagate — but production uses the Dbus impl, so
-             * swallow here. *)
-            ()))
+          with e ->
+            prerr_endline
+              (Printf.sprintf "pctl: subscriber callback for %s raised: %s" u
+                 (Printexc.to_string e))))
     !r
 
 let set_state t u state =
@@ -109,11 +112,12 @@ let start_unit t ~unit:u =
 let stop_unit t ~unit:u =
   (match Hashtbl.find_opt t.fail_next_stop u with
    | None -> ()
-   | Some reason ->
+   | Some (error_name, reply) ->
        Hashtbl.remove t.fail_next_stop u;
        raise
          (Schema.Pctl_error
-            (Schema.Unit_op_failed { op = "stop"; unit_ = u; reply = reason })));
+            (Schema.Unit_op_failed
+               { op = "StopUnit"; unit_ = u; error_name; reply })));
   let cur = current_state t u in
   match cur with
   | Inactive | Failed -> ()
@@ -158,8 +162,12 @@ let subscribe_unit_changes t ~unit:u cb =
 
 let fail_next_start t ~unit:u = Hashtbl.replace t.fail_next u ()
 
-let fail_next_stop t ~unit:u ~reason =
-  Hashtbl.replace t.fail_next_stop u reason
+(* [error_name] and [reply] are the two halves of what the Dbus adapter
+ * raises: the wire name callers classify on, and the rendered reply. A
+ * test that injects one without the other would be pinning a value the
+ * real adapter never produces. *)
+let fail_next_stop t ~unit:u ~error_name ~reply =
+  Hashtbl.replace t.fail_next_stop u (error_name, reply)
 
 let push_state t ~unit:u state = set_state t u state
 

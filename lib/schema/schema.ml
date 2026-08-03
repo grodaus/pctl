@@ -93,7 +93,20 @@ type error =
   | Nix_build_failed of { expr : string; exit_code : int; stderr : string }
   | Install_failed of { path : string; reason : string }
   | Bus_connect_failed of { msg : string }
-  | Unit_op_failed of { op : string; unit_ : string; reply : string }
+  (* [error_name] is the D-Bus error name the peer replied with, e.g.
+   * "org.freedesktop.systemd1.NoSuchUnit" or, for a locally-generated
+   * failure that sd_bus_error_set_errno named, "System.Error.ENOTCONN".
+   * It is what callers classify on — see [Systemctl.Bus_errors].
+   * [None] means no name was available: a failure that never reached
+   * sd-bus (an unparseable ActiveState, a wait that ended in the wrong
+   * state) or the near-unreachable empty-struct reply. [reply] is for
+   * rendering only and must never be classified on. *)
+  | Unit_op_failed of {
+      op : string;
+      unit_ : string;
+      error_name : string option;
+      reply : string;
+    }
   | Probe_timeout of { service : string; timeout_ms : int }
   | Identity_invalid of { path : string; reason : string }
   | Registry_io of { id : string; reason : string }
@@ -454,23 +467,6 @@ type result_row = {
 (* Errors                                                              *)
 (* ------------------------------------------------------------------ *)
 
-(* The D-Bus error name systemd answers with when a unit op names a unit
- * it cannot load. [reply] is name-first whenever the sd_bus_error struct
- * carried a name (Dbus.format_bus_reply; In_mem replays the reason a test
- * injects), so a prefix test identifies the name.
- *
- * Callers use this to tolerate exactly the "there was nothing there"
- * failure and propagate every other one. The two replies that carry no
- * name — format_bus_reply's bare-message arm and its decoded-errno
- * fallback for a transport failure — fail the test, which is the safe
- * direction. *)
-let no_such_unit_dbus_error = "org.freedesktop.systemd1.NoSuchUnit"
-
-let is_no_such_unit = function
-  | Unit_op_failed { reply; _ } ->
-      String.starts_with ~prefix:no_such_unit_dbus_error reply
-  | _ -> false
-
 let render_error = function
   | Spec_not_found { path } -> Printf.sprintf "spec not found: %s" path
   | Spec_parse { path; msg } ->
@@ -484,7 +480,7 @@ let render_error = function
       Printf.sprintf "install failed for %s: %s" path reason
   | Bus_connect_failed { msg } ->
       Printf.sprintf "sd-bus connect failed: %s" msg
-  | Unit_op_failed { op; unit_; reply } ->
+  | Unit_op_failed { op; unit_; reply; error_name = _ } ->
       Printf.sprintf "systemctl %s %s failed: %s" op unit_ reply
   | Probe_timeout { service; timeout_ms } ->
       Printf.sprintf "probe for service %s timed out after %d ms" service

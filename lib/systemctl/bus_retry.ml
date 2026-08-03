@@ -1,5 +1,5 @@
-(* Bus_retry — when a failed bus call means "the peer went away" rather
- * than "the call was rejected", and how long to keep trying.
+(* Bus_retry — how long to keep re-issuing a call whose peer went away.
+ * WHICH failures mean that is [Bus_errors.is_peer_gone]'s job.
  *
  * The case this exists for, observed on this host (systemd 260,
  * dbus-broker 37):
@@ -18,7 +18,8 @@
  * pctl's own connection is healthy, so the same handle can just ask
  * again.
  *
- * ServiceUnknown, third in the list below, cannot fire on this host:
+ * ServiceUnknown, one of [Bus_errors.peer_gone_error_names], cannot fire
+ * on this host:
  * dbus-broker returns it for a destination that is not activatable,
  * and `busctl --user list --activatable` shows org.freedesktop.systemd1
  * is. Whether a name is activatable is host configuration this code
@@ -45,45 +46,6 @@
  *
  * The clock is monotonic so that a CLOCK_REALTIME step inside the
  * window cannot end the retry early or extend it indefinitely. *)
-
-(* D-Bus error names that mean the destination is not on the bus right
- * now. Matched exactly: these are wire constants, and a prefix test
- * would couple the classifier to whatever formatting the caller
- * applies afterwards.
- *
- * org.freedesktop.DBus.Error.Disconnected is deliberately absent. It
- * names OUR connection, not the peer's — errno_to_bus_error_const
- * (bus-error.c) produces it only for ECONNRESET / ECONNABORTED /
- * ENETRESET, i.e. our own socket died. Asking again on a dead handle
- * cannot succeed, and would replace a truthful "Disconnected" with
- * whatever the second attempt reports instead. *)
-let peer_gone_error_names =
-  [
-    "org.freedesktop.DBus.Error.NoReply";
-    "org.freedesktop.DBus.Error.ServiceUnknown";
-    "org.freedesktop.DBus.Error.NameHasNoOwner";
-  ]
-
-(* Transport failures almost never arrive unnamed: every [fail:] path
- * in sd_bus_call_methodv (bus-convenience.c) and sd_bus_call runs
- * sd_bus_error_set_errno, and both use bus_assert_return for their
- * argument checks, which populates too. That yields
- * "System.Error.<ERRNO>" for an errno with no const mapping (ENOTCONN
- * is one) and org.freedesktop.DBus.Error.Failed when the errno has no
- * name at all. Exact matching rejects every one of those, which is the
- * answer we want.
- *
- * Two checks in sd_bus_call are plain assert_return rather than
- * bus_assert_return, so they return the errno with the error struct
- * untouched and DO yield [None]: -ENOPKG when bus_resolve rejects the
- * bus, -ENOTCONN when neither a bus nor a message-attached bus was
- * given. pctl hands every call a live sd_bus* from sd_bus_open_user,
- * so neither can fire — [None] is unreachable because of that, not
- * because sd-bus names everything. The arm answers "do not retry"
- * because an unnamed failure is not evidence the peer will return. *)
-let is_peer_gone = function
-  | None -> false
-  | Some name -> List.mem name peer_gone_error_names
 
 let seconds_since (start : Mtime.t) (now : Mtime.t) : float =
   Mtime.Span.to_float_ns (Mtime.span start now) /. 1e9

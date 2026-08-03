@@ -176,6 +176,25 @@ let test_reload_one_service_changed () =
          Schema.Unit_filename.equal row.unit_ (service_unit "web"))
        changed)
 
+(* The failure In_mem replays for an injected stop: the wire name callers
+   classify on, plus the reply the Dbus adapter would render from it. [op]
+   is "StopUnit" — the Manager method name the real adapter raises with, so
+   an assertion on it pins a label that exists in production. *)
+let arm_failing_stop handle ~unit_ =
+  Systemctl.In_mem.fail_next_stop handle ~unit:unit_
+    ~error_name:(Some "org.freedesktop.DBus.Error.NoReply")
+    ~reply:"org.freedesktop.DBus.Error.NoReply: Remote peer disconnected"
+
+(* The one stop failure the lifecycle tolerates, as systemd words it —
+   recorded against systemd 260.1, `dbus-send --session --print-reply …
+   Manager.StopUnit` on an unloaded unit. *)
+let arm_no_such_unit_stop handle ~unit_ =
+  Systemctl.In_mem.fail_next_stop handle ~unit:unit_
+    ~error_name:(Some Systemctl.Bus_errors.no_such_unit)
+    ~reply:
+      (Systemctl.Bus_errors.no_such_unit ^ ": Unit " ^ unit_
+      ^ " not loaded.")
+
 (* A slice stop that fails for any reason other than no-such-unit means
    the cgroup cascade never fired: the services are still running. Down
    must abort there rather than unload the slice and delete the unit
@@ -187,13 +206,13 @@ let test_down_propagates_stop_failure () =
   let s = spec_of_services [ svc_simple "web" ] in
   let _ = L.up ~conn ~handle ~unit_store:us ~ctx ~spec:s () in
   let slice_s = Schema.Unit_filename.to_string slice_unit in
-  Systemctl.In_mem.fail_next_stop handle ~unit:slice_s
-    ~reason:"org.freedesktop.DBus.Error.NoReply: Remote peer disconnected";
+  arm_failing_stop handle ~unit_:slice_s;
   let raised =
     try
       let _ = L.down ~conn ~handle ~unit_store:us ~ctx () in
       false
-    with Schema.Pctl_error (Schema.Unit_op_failed { op = "stop"; _ }) -> true
+    with
+    | Schema.Pctl_error (Schema.Unit_op_failed { op = "StopUnit"; _ }) -> true
   in
   Alcotest.(check bool) "down raised Unit_op_failed" true raised;
   (* The units the still-running services depend on must survive, both on
@@ -225,15 +244,61 @@ let test_down_tolerates_no_such_unit () =
   let s = spec_of_services [ svc_simple "web" ] in
   let _ = L.up ~conn ~handle ~unit_store:us ~ctx ~spec:s () in
   let slice_s = Schema.Unit_filename.to_string slice_unit in
-  let reply =
-    Schema.no_such_unit_dbus_error ^ ": Unit " ^ slice_s ^ " not loaded."
-  in
-  Systemctl.In_mem.fail_next_stop handle ~unit:slice_s ~reason:reply;
+  arm_no_such_unit_stop handle ~unit_:slice_s;
   let r = L.down ~conn ~handle ~unit_store:us ~ctx () in
   Alcotest.(check int) "down cleared manifest" 0 r.units_on_disk;
   Alcotest.(check int)
     "store empty" 0
     (List.length (Unit_store.In_mem.list us))
+
+(* Reload a two-service spec down to one, so the dropped service's row is
+   [Removed]. Its unit file is deleted BEFORE the stop is issued, so the
+   two stop outcomes are not symmetric:
+
+   - no-such-unit means systemd already GCed the fileless unit — nothing
+     to stop, nothing running, so the reload finishes;
+   - anything else means the process is still alive and its unit file is
+     already gone, which is the one state [pctl status] and [pctl down]
+     cannot see. It must be reported, not tolerated. *)
+let reload_dropping_api handle conn us =
+  let both = spec_of_services [ svc_simple "web"; svc_simple "api" ] in
+  let _ = L.up ~conn ~handle ~unit_store:us ~ctx ~spec:both () in
+  let api_s = Schema.Unit_filename.to_string (service_unit "api") in
+  (api_s, spec_of_services [ svc_simple "web" ])
+
+let test_reload_propagates_removed_stop_failure () =
+  with_sandbox @@ fun ~sw:_ ~conn ~handle ~us ->
+  let api_s, only_web = reload_dropping_api handle conn us in
+  arm_failing_stop handle ~unit_:api_s;
+  let raised =
+    try
+      let _ = L.up ~conn ~handle ~unit_store:us ~ctx ~spec:only_web () in
+      false
+    with
+    | Schema.Pctl_error (Schema.Unit_op_failed { op = "StopUnit"; unit_; _ }) ->
+        Alcotest.(check string) "names the removed unit" api_s unit_;
+        true
+  in
+  Alcotest.(check bool) "reload raised Unit_op_failed" true raised;
+  (* The manifest is not replaced, so the next reload still sees the
+     dropped service as [Removed] and retries the stop. *)
+  Alcotest.(check int)
+    "manifest still lists both services" 3
+    (List.length
+       (State.Projects.load_manifest conn
+          ~project_id:(Schema.Project_id.to_string id)))
+
+let test_reload_tolerates_removed_no_such_unit_stop () =
+  with_sandbox @@ fun ~sw:_ ~conn ~handle ~us ->
+  let api_s, only_web = reload_dropping_api handle conn us in
+  arm_no_such_unit_stop handle ~unit_:api_s;
+  let r = L.up ~conn ~handle ~unit_store:us ~ctx ~spec:only_web () in
+  Alcotest.(check int) "slice + web remain" 2 r.units_on_disk;
+  Alcotest.(check bool)
+    "api unit file removed" false
+    (List.exists
+       (Schema.Unit_filename.equal (service_unit "api"))
+       (Unit_store.In_mem.list us))
 
 let test_up_fail_next_write () =
   with_sandbox @@ fun ~sw:_ ~conn ~handle ~us ->
@@ -291,6 +356,10 @@ let () =
             test_down_propagates_stop_failure;
           Alcotest.test_case "down tolerates no-such-unit stop" `Quick
             test_down_tolerates_no_such_unit;
+          Alcotest.test_case "reload propagates a Removed row's stop failure"
+            `Quick test_reload_propagates_removed_stop_failure;
+          Alcotest.test_case "reload tolerates a Removed row's no-such-unit stop"
+            `Quick test_reload_tolerates_removed_no_such_unit_stop;
           Alcotest.test_case "up fail_next_write → Install_failed" `Quick
             test_up_fail_next_write;
         ] );

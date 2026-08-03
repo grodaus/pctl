@@ -147,6 +147,8 @@ let error_of_row (r : Schema.result_row) ~overall_timeout_seconds :
            {
              op = "wait";
              unit_ = r.name;
+             (* pctl's own verdict on a terminal state, not a bus reply. *)
+             error_name = None;
              reply =
                Printf.sprintf
                  "service %s terminated in state '%s' (expected 'active')"

@@ -15,8 +15,11 @@
  * not as new surface on [reload] itself.
  *
  * Failure policy is hard-coded to match the oracle Nushell lifecycle:
- *   - stop_unit failures on [Removed] rows are tolerated (systemd may
- *     have already GCed the unit after its file was deleted);
+ *   - stop_unit on a [Removed] row tolerates ONLY a no-such-unit reply
+ *     (systemd may have already GCed the unit after its file was
+ *     deleted); by that point the file IS gone, so any other failure
+ *     leaves a live process with no unit left to manage it and must be
+ *     reported;
  *   - the down path's slice stop_unit tolerates ONLY a no-such-unit
  *     reply; anything else propagates, because there the unit files are
  *     still on disk and deleting them after a failed cascade orphans the
@@ -97,9 +100,9 @@ module Make (M : Systemctl.S) (US : Unit_store.S) = struct
        - [Changed] on a slice row is a no-op: bouncing the slice
          would restart every service under it, which is never what
          [pctl reload] means.
-       - [Removed] tolerates stop failure — systemd may have already
-         GCed the unit after its file was deleted. Everything else
-         propagates. *)
+       - [Removed] tolerates a no-such-unit stop reply — systemd may
+         have already GCed the unit after its file was deleted.
+         Everything else propagates. *)
   let is_slice_unit (r : Schema.plan_row) : bool =
     let s = Schema.Unit_filename.to_string r.unit_ in
     let n = String.length s in
@@ -114,8 +117,14 @@ module Make (M : Systemctl.S) (US : Unit_store.S) = struct
         if is_slice_unit r then ()
         else M.restart_unit handle ~unit:unit_s
     | Schema.Removed -> (
+        (* The unit file is already deleted when this runs (see [reload]'s
+           up path), so systemd may have GCed the unit and answer
+           no-such-unit — nothing to stop, nothing running. Any other
+           failure means the process is still alive with its unit file
+           gone, which is exactly the state that must not pass silently. *)
         try M.stop_unit handle ~unit:unit_s
-        with Schema.Pctl_error _ -> ())
+        with Schema.Pctl_error e when Systemctl.Bus_errors.is_no_such_unit e ->
+          ())
 
   let apply_plan ~(handle : M.t) ~(rows : Schema.plan_row list) : unit =
     let rows = Plan.sort_rows rows in
@@ -172,7 +181,7 @@ module Make (M : Systemctl.S) (US : Unit_store.S) = struct
             with no units left to manage them, invisible to [pctl status]
             and unreachable by [pctl down]. *)
          (try M.stop_unit handle ~unit:slice_unit
-          with Schema.Pctl_error e when Schema.is_no_such_unit e -> ());
+          with Schema.Pctl_error e when Systemctl.Bus_errors.is_no_such_unit e -> ());
          M.daemon_reload handle;
          List.iter
            (fun (uf, _hash) -> US.remove unit_store ~unit_:uf)

@@ -88,7 +88,7 @@ module Make (M : Systemctl.S) = struct
    * documented intent, and exercised through the fake. *)
   let stop_or_propagate (handle : M.t) ~(unit_ : string) : unit =
     try M.stop_unit handle ~unit:unit_
-    with Schema.Pctl_error e when Schema.is_no_such_unit e -> ()
+    with Schema.Pctl_error e when Systemctl.Bus_errors.is_no_such_unit e -> ()
 
   let remove_project ~(conn : State.Db.t) ~(handle : M.t)
       (row : State.Projects.t) : unit =

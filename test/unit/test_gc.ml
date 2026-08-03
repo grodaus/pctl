@@ -288,7 +288,15 @@ let test_purge_preserves_live_rows () =
    units left to manage them, unreachable by [pctl down] or a later
    [pctl gc]. Because gc is a multi-row loop, the failure is reported
    for that row only and the remaining projects are still purged. *)
-let stop_failure_reply = "org.freedesktop.DBus.Error.NoReply: Remote peer disconnected"
+let stop_failure_name = "org.freedesktop.DBus.Error.NoReply"
+
+let stop_failure_reply = stop_failure_name ^ ": Remote peer disconnected"
+
+(* The pair the Dbus adapter raises for that failure, as In_mem replays
+   it: the wire name callers classify on plus the rendered reply. *)
+let arm_failing_stop handle ~unit_ =
+  Systemctl.In_mem.fail_next_stop handle ~unit:unit_
+    ~error_name:(Some stop_failure_name) ~reply:stop_failure_reply
 
 (* The per-row warning is the only report a skipped project gets, so a
    Pctl_error must render as itself, not as "Pctl_error(_)". *)
@@ -296,7 +304,12 @@ let test_describe_exn_renders_pctl_error () =
   let e =
     Schema.Pctl_error
       (Schema.Unit_op_failed
-         { op = "stop"; unit_ = "pctl-x.slice"; reply = stop_failure_reply })
+         {
+           op = "stop";
+           unit_ = "pctl-x.slice";
+           error_name = Some stop_failure_name;
+           reply = stop_failure_reply;
+         })
   in
   Alcotest.(check string)
     "renders the systemctl failure"
@@ -315,8 +328,7 @@ let test_purge_skips_row_whose_stop_fails () =
   upsert_row conn ~id:"b_ok" ~path:xdg ~session_id:"stale" ();
   let kept = install_units conn ~id_s:"a_fails" in
   let _ = install_units conn ~id_s:"b_ok" in
-  Systemctl.In_mem.fail_next_stop handle ~unit:(slice_name_of "a_fails")
-    ~reason:stop_failure_reply;
+  arm_failing_stop handle ~unit_:(slice_name_of "a_fails");
   let removed = G.purge ~conn ~handle in
   Alcotest.(check int) "only the healthy row counted as removed" 1 removed;
   Alcotest.(check (list string))
@@ -338,7 +350,9 @@ let test_purge_tolerates_no_such_unit_stop () =
   let _ = install_units conn ~id_s:"a_orphan" in
   let slice = slice_name_of "a_orphan" in
   Systemctl.In_mem.fail_next_stop handle ~unit:slice
-    ~reason:(Schema.no_such_unit_dbus_error ^ ": Unit " ^ slice ^ " not loaded.");
+    ~error_name:(Some Systemctl.Bus_errors.no_such_unit)
+    ~reply:
+      (Systemctl.Bus_errors.no_such_unit ^ ": Unit " ^ slice ^ " not loaded.");
   let removed = G.purge ~conn ~handle in
   Alcotest.(check int) "row still purged" 1 removed;
   Alcotest.(check (list string)) "DB is empty" [] (ids_sorted conn);
@@ -350,8 +364,7 @@ let test_sweep_skips_row_whose_stop_fails () =
   upsert_row conn ~id:"b_ok" ~path:"/no/such/path" ~session_id:"stale" ();
   let kept = install_units conn ~id_s:"a_fails" in
   let _ = install_units conn ~id_s:"b_ok" in
-  Systemctl.In_mem.fail_next_stop handle ~unit:(slice_name_of "a_fails")
-    ~reason:stop_failure_reply;
+  arm_failing_stop handle ~unit_:(slice_name_of "a_fails");
   G.opportunistic_sweep ~conn ~handle;
   Alcotest.(check (list string))
     "failed row survives, sibling still swept" [ "a_fails" ] (ids_sorted conn);

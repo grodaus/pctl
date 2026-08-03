@@ -242,9 +242,12 @@ let test_error_of_row_failed () =
       ~overall_timeout_seconds:5
   in
   match err with
-  | Some (Schema.Unit_op_failed { op; unit_; reply }) ->
+  | Some (Schema.Unit_op_failed { op; unit_; reply; error_name }) ->
       Alcotest.(check string) "op is wait" "wait" op;
       Alcotest.(check string) "unit is service name" "web" unit_;
+      (* pctl's own verdict, not a bus reply: nothing may classify it as
+         a tolerable systemd error. *)
+      Alcotest.(check (option string)) "no D-Bus error name" None error_name;
       Alcotest.(check bool)
         "reply mentions 'failed'" true
         (String.length reply > 0

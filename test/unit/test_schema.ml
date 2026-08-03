@@ -296,53 +296,6 @@ let test_result_row_of_json () =
   | Ok _ -> Alcotest.fail "should reject unknown state"
   | Error _ -> ()
 
-(* [is_no_such_unit] decides whether a stop failure may be tolerated, so
-   the exact reply shapes matter. The tolerated string is what
-   Dbus.format_bus_reply produces from a populated sd_bus_error —
-   verified against systemd 257 with `dbus-send --session
-   … Manager.StopUnit`, which answers "org.freedesktop.systemd1.NoSuchUnit:
-   Unit x.service not loaded." for an unloaded service. *)
-let test_is_no_such_unit () =
-  let yes =
-    [
-      "org.freedesktop.systemd1.NoSuchUnit: Unit x.service not loaded.";
-      "org.freedesktop.systemd1.NoSuchUnit (no message)";
-    ]
-  in
-  let no =
-    [
-      (* transport failure: sd_bus_error empty, reply is the decoded errno *)
-      "StopUnit returned -104 (ECONNRESET: Connection reset by peer)";
-      "org.freedesktop.DBus.Error.NoReply: Remote peer disconnected";
-      "org.freedesktop.systemd1.JobTypeNotApplicable: Bad job type";
-      (* the name is only meaningful as a prefix — a message that merely
-         mentions it must not be tolerated *)
-      "org.freedesktop.DBus.Error.Failed: not org.freedesktop.systemd1.NoSuchUnit";
-      "";
-    ]
-  in
-  List.iter
-    (fun reply ->
-      Alcotest.(check bool)
-        ("tolerated: " ^ reply)
-        true
-        (is_no_such_unit (Unit_op_failed { op = "stop"; unit_ = "x"; reply })))
-    yes;
-  List.iter
-    (fun reply ->
-      Alcotest.(check bool)
-        ("propagated: " ^ reply)
-        false
-        (is_no_such_unit (Unit_op_failed { op = "stop"; unit_ = "x"; reply })))
-    no;
-  (* Only a unit op can be a no-such-unit reply; every other arm is a
-     different failure and must never be tolerated as one. *)
-  Alcotest.(check bool)
-    "Bus_connect_failed is not no-such-unit" false
-    (is_no_such_unit
-       (Bus_connect_failed
-          { msg = "org.freedesktop.systemd1.NoSuchUnit: Unit x not loaded." }))
-
 let test_error_rendering () =
   let msgs =
     [
@@ -358,7 +311,8 @@ let test_error_rendering () =
         "install failed for /dst: eacces" );
       ( Bus_connect_failed { msg = "no socket" },
         "sd-bus connect failed: no socket" );
-      ( Unit_op_failed { op = "start"; unit_ = "x.service"; reply = "nope" },
+      ( Unit_op_failed
+          { op = "start"; unit_ = "x.service"; error_name = None; reply = "nope" },
         "systemctl start x.service failed: nope" );
       ( Probe_timeout { service = "pg"; timeout_ms = 1000 },
         "probe for service pg timed out after 1000 ms" );
@@ -384,7 +338,8 @@ let test_error_exit_codes () =
       (Install_failed { path = ""; reason = "" }, 4);
       (Registry_io { id = ""; reason = "" }, 4);
       (Bus_connect_failed { msg = "" }, 5);
-      (Unit_op_failed { op = ""; unit_ = ""; reply = "" }, 5);
+      ( Unit_op_failed { op = ""; unit_ = ""; error_name = None; reply = "" },
+        5 );
       (Probe_timeout { service = ""; timeout_ms = 0 }, 6);
     ]
   in
@@ -432,8 +387,6 @@ let () =
           test_case "result_row → JSON golden" `Quick test_result_row_to_json;
           test_case "result_row round-trip" `Quick test_result_row_of_json;
           test_case "error rendering" `Quick test_error_rendering;
-          test_case "is_no_such_unit classification" `Quick
-            test_is_no_such_unit;
           test_case "error exit codes" `Quick test_error_exit_codes;
         ]
         @ List.map QCheck_alcotest.to_alcotest [ prop_project_path_is_abs ] );
