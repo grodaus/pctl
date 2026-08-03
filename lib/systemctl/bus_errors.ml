@@ -19,18 +19,13 @@
  * BUS_ERROR_NO_SUCH_UNIT, "Unit x.service not loaded." Callers tolerate
  * exactly this "there was nothing there" failure and propagate the rest.
  *
- * Which ops can answer it depends on whether the op LOADS the name first
- * (GENERIC_UNIT_LOAD, src/core/dbus-manager.c). StopUnit does, so a name
- * systemd can synthesise never reaches the error — an unloaded .service
- * answers this name, an unloaded .slice succeeds and returns a job path.
- * ResetFailedUnit does not load, so it answers this name for anything not
- * currently loaded, slice included. Both measured on systemd 260.1 with
- * `dbus-send --session --print-reply`.
- *
- * The slice half of that is what test/e2e/test_down_missing_units.ml
- * exists for: it holds the observable contract for the one caller that
- * stops a SLICE under this tolerance ([Lifecycle]'s down path), which on
- * this systemd never reaches it.
+ * Whether an op can answer it at all depends on whether that op LOADS the
+ * name first (GENERIC_UNIT_LOAD, src/core/dbus-manager.c): a loading op
+ * cannot reach the error for a name systemd is willing to synthesise.
+ * StopUnit loads, ResetFailedUnit does not — so they disagree per unit
+ * type, and which types those are is recorded in
+ * test/e2e/test_down_missing_units.ml against real systemd. [Lifecycle]'s
+ * down path is the caller that depends on it.
  *
  * "Already not failed" is not an error reply at all — unit_reset_failed
  * on a healthy unit just succeeds (bus_unit_method_reset_failed,

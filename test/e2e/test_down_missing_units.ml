@@ -11,7 +11,10 @@
  * "pctl down: no registered project with id 'project_…'") and never
  * enters Lifecycle. So: up, then delete the units out of band, then down.
  *
- * Measured on this host (systemd 257) while writing this test:
+ * Measured on this host, re-recorded on systemd 260.1 (first taken on 257;
+ * both readings agree). This file is what [Systemctl.Bus_errors] points at
+ * for the per-unit-type half of the no-such-unit contract, so the readings
+ * have to stay current with the host:
  *   - `dbus-send --session … Manager.StopUnit` on an unloaded .service
  *     answers "org.freedesktop.systemd1.NoSuchUnit: Unit x.service not
  *     loaded."; on an unloaded .slice it SUCCEEDS and returns a job path.

@@ -263,7 +263,7 @@ module Schema = struct
     | Spec_not_found       of { path : string }
     | Spec_parse           of { path : string; msg : string }
     | Spec_unknown_version of int
-    | Nix_build_failed     of { expr : string; exit : int; stderr : string }
+    | Nix_build_failed     of { expr : string; exit_code : int; stderr : string }
     | Install_failed       of { path : string; reason : string }
     | Bus_connect_failed   of { msg : string }
     | Unit_op_failed       of { op : string; unit_ : string;
@@ -281,8 +281,7 @@ A `Probe_exec_failed of { service; msg }` arm was dropped from this listing:
 nothing ever constructed it. Reinstating it is tracked by **pctl-j9k**.
 
 This listing is the plan's narrative sketch, not the contract — `Schema.error`
-in `lib/schema/schema.ml` is. It has already drifted (no `Journalctl_failed`
-arm), so read it for shape and the code for truth.
+in `lib/schema/schema.ml` is. Read it for shape and the code for truth.
 
 ## Systemctl port
 

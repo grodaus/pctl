@@ -198,6 +198,60 @@ let test_pending_job_set_and_clear () =
     "start_unit clears pending_job" false
     (In_mem.unit_job_pending sc ~unit:"a.service")
 
+(* Parity with the Dbus adapter's one tolerance: Dbus.get_unit_path_opt
+ * turns a no-such-unit reply into Inactive / "no job pending" rather than
+ * an exception (pctl-a7p). The fake honours that, so a test cannot arm
+ * that name and pass against propagation production does not do — the
+ * recorded-double drift pctl-fl6 is about. Every other name raises, which
+ * test_probe drives end-to-end. *)
+let test_read_arm_absorbs_no_such_unit () =
+  eio_run @@ fun ~sw ~env ->
+  let sc = In_mem.connect ~sw env in
+  let arm f =
+    f sc ~unit:"a.service"
+      ~error_name:(Some Systemctl.Bus_errors.no_such_unit)
+      ~reply:(Systemctl.Bus_errors.no_such_unit ^ ": Unit a.service not loaded.")
+  in
+  (* Pushed state is irrelevant: the real adapter never resolves a path for
+   * this reply, so it cannot report anything but Inactive. *)
+  In_mem.push_state sc ~unit:"a.service" Schema.Active;
+  arm In_mem.fail_next_unit_state;
+  Alcotest.check state_testable "no-such-unit read → Inactive" Schema.Inactive
+    (In_mem.unit_state sc ~unit:"a.service");
+  In_mem.set_pending_job sc ~unit:"a.service";
+  arm In_mem.fail_next_job_pending;
+  Alcotest.(check bool)
+    "no-such-unit job read → no job pending" false
+    (In_mem.unit_job_pending sc ~unit:"a.service")
+
+(* The arms are per-read and one-shot: [Probe] always reads unit_state
+ * first, so a shared table would be consumed there and the job-pending
+ * narrowing could never be driven (pctl-6ph). *)
+let test_read_arms_are_independent () =
+  eio_run @@ fun ~sw ~env ->
+  let sc = In_mem.connect ~sw env in
+  In_mem.set_pending_job sc ~unit:"a.service";
+  In_mem.fail_next_job_pending sc ~unit:"a.service"
+    ~error_name:(Some Systemctl.Bus_errors.no_reply) ~reply:"peer gone";
+  (* Reading state first must not consume the job-pending arm. *)
+  Alcotest.check state_testable "unit_state unaffected" Schema.Inactive
+    (In_mem.unit_state sc ~unit:"a.service");
+  Alcotest.check_raises "job read still armed"
+    (Schema.Pctl_error
+       (Schema.Unit_op_failed
+          {
+            op = "GetUnit";
+            unit_ = "a.service";
+            error_name = Some Systemctl.Bus_errors.no_reply;
+            reply = "peer gone";
+          }))
+    (fun () -> ignore (In_mem.unit_job_pending sc ~unit:"a.service"));
+  (* One-shot, like fail_next_stop: the retry a caller makes after the bus
+     comes back must succeed. *)
+  Alcotest.(check bool)
+    "arm consumed" true
+    (In_mem.unit_job_pending sc ~unit:"a.service")
+
 let () =
   Alcotest.run "pctl systemctl/in_mem"
     [
@@ -214,6 +268,10 @@ let () =
           Alcotest.test_case "subscribers_count" `Quick test_subscribers_count;
           Alcotest.test_case "inspect sorted" `Quick test_inspect_sorted;
           Alcotest.test_case "idempotent start" `Quick test_idempotent_start;
+          Alcotest.test_case "read arm absorbs no-such-unit" `Quick
+            test_read_arm_absorbs_no_such_unit;
+          Alcotest.test_case "read arms are per-read and one-shot" `Quick
+            test_read_arms_are_independent;
           Alcotest.test_case "pending_job set/clear" `Quick
             test_pending_job_set_and_clear;
         ] );

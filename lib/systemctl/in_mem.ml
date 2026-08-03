@@ -12,7 +12,8 @@
  * Test-only APIs are exposed alongside the SYSTEMCTL surface:
  *   - [fail_next_start]     force the next [start_unit] to end in Failed
  *   - [fail_next_stop]      force the next [stop_unit] to raise
- *   - [fail_next_read]      force the next state read to raise
+ *   - [fail_next_unit_state], [fail_next_job_pending]
+ *                           force the next read of that kind to raise
  *   - [push_state]          directly inject a state (fires subscribers)
  *   - [inspect]             dump (unit, state) pairs
  *   - [subscribers_count]   leak check
@@ -36,12 +37,14 @@ type t = {
          entry is removed on fire so repeated calls don't keep raising.
          The name is what [Bus_errors] classifies on, so a test injecting
          a failure must say which one it is injecting. *)
-  fail_next_read : (string, string option * string) Hashtbl.t;
-      (* unit → (error_name, reply) for the next [unit_state] or
-         [unit_job_pending]. Same one-shot shape as [fail_next_stop].
-         Both reads are one GetUnit in the Dbus adapter, which is where a
-         peer-gone reply lands during a daemon-reexec, so the fake models
-         them as failing together. *)
+  fail_next_unit_state : (string, string option * string) Hashtbl.t;
+  fail_next_job_pending : (string, string option * string) Hashtbl.t;
+      (* unit → (error_name, reply) for the next read of that kind. Same
+         one-shot shape as [fail_next_stop], and one table per read rather
+         than one shared: the Dbus adapter issues a separate GetUnit +
+         Properties.Get pair for each, so a fault hits them independently.
+         A shared arm would also be unusable, because [Probe] always reads
+         [unit_state] first and would consume it every time. *)
   pending_jobs : (string, unit) Hashtbl.t;
       (* unit → pending start-job marker. Test fixtures toggle this to
          model systemd's behaviour on units with Requires=: StartUnit
@@ -58,7 +61,8 @@ let connect ~sw env =
     subscribers = Hashtbl.create 16;
     fail_next = Hashtbl.create 4;
     fail_next_stop = Hashtbl.create 4;
-    fail_next_read = Hashtbl.create 4;
+    fail_next_unit_state = Hashtbl.create 4;
+    fail_next_job_pending = Hashtbl.create 4;
     pending_jobs = Hashtbl.create 4;
   }
 
@@ -159,26 +163,33 @@ let reset_failed_unit t ~unit:u =
   | Schema.Failed -> set_state t u Schema.Inactive
   | _ -> ()
 
-(* Both state reads go through GetUnit in the Dbus adapter, and since
- * pctl-a7p only a no-such-unit reply there is absorbed — everything else
- * raises. [op] is that method's name so the raised value matches what the
- * real adapter would produce. *)
-let raise_if_read_armed t ~op ~unit:u =
-  match Hashtbl.find_opt t.fail_next_read u with
-  | None -> ()
+(* Consume an armed read fault. Both reads resolve the unit through
+ * GetUnit, so [op] is that method's name and the raised value matches
+ * what the Dbus adapter would produce.
+ *
+ * [absorbed] is what that adapter answers for the ONE name it tolerates
+ * (Dbus.get_unit_path_opt, narrowed under pctl-a7p): a no-such-unit reply
+ * becomes a value, not an exception. Honouring that here is what stops a
+ * test arming that name and passing against propagation production does
+ * not do. *)
+let consume_read_arm table ~op ~unit:u ~absorbed ~ok =
+  match Hashtbl.find_opt table u with
+  | None -> ok ()
   | Some (error_name, reply) ->
-      Hashtbl.remove t.fail_next_read u;
-      raise
-        (Schema.Pctl_error
-           (Schema.Unit_op_failed { op; unit_ = u; error_name; reply }))
+      Hashtbl.remove table u;
+      let e = Schema.Unit_op_failed { op; unit_ = u; error_name; reply } in
+      if Bus_errors.is_no_such_unit e then absorbed
+      else raise (Schema.Pctl_error e)
 
 let unit_state t ~unit:u =
-  raise_if_read_armed t ~op:"GetUnit" ~unit:u;
-  current_state t u
+  consume_read_arm t.fail_next_unit_state ~op:"GetUnit" ~unit:u
+    ~absorbed:Schema.Inactive
+    ~ok:(fun () -> current_state t u)
 
 let unit_job_pending t ~unit:u =
-  raise_if_read_armed t ~op:"GetUnit" ~unit:u;
-  Hashtbl.mem t.pending_jobs u
+  consume_read_arm t.fail_next_job_pending ~op:"GetUnit" ~unit:u
+    ~absorbed:false
+    ~ok:(fun () -> Hashtbl.mem t.pending_jobs u)
 
 let subscribe_unit_changes t ~unit:u cb =
   let r = subscribers_for t u in
@@ -195,12 +206,16 @@ let fail_next_start t ~unit:u = Hashtbl.replace t.fail_next u ()
 let fail_next_stop t ~unit:u ~error_name ~reply =
   Hashtbl.replace t.fail_next_stop u (error_name, reply)
 
-(* Arm the next state read to fail. Exists so a test can drive the
- * caller-side half of pctl-a7p: that a bus failure reaching [unit_state]
- * or [unit_job_pending] propagates to whoever asked instead of being
- * absorbed into a state. *)
-let fail_next_read t ~unit:u ~error_name ~reply =
-  Hashtbl.replace t.fail_next_read u (error_name, reply)
+(* Arm one read to fail. These exist so a test can drive the caller-side
+ * half of pctl-a7p / pctl-q2j: a bus failure reaching either read must
+ * reach whoever asked, instead of becoming Inactive or "no job pending".
+ * Arming [Bus_errors.no_such_unit] yields the absorbed value instead —
+ * see [consume_read_arm]. *)
+let fail_next_unit_state t ~unit:u ~error_name ~reply =
+  Hashtbl.replace t.fail_next_unit_state u (error_name, reply)
+
+let fail_next_job_pending t ~unit:u ~error_name ~reply =
+  Hashtbl.replace t.fail_next_job_pending u (error_name, reply)
 
 let push_state t ~unit:u state = set_state t u state
 

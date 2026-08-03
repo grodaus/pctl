@@ -188,12 +188,10 @@ let arm_failing_stop handle ~unit_ =
 (* The one stop failure the lifecycle tolerates, worded as systemd words
    it for a .service (see [Systemctl.Bus_errors.no_such_unit]).
 
-   For the .slice these tests arm, StopUnit on this systemd SUCCEEDS
-   instead — systemd synthesises fragment-less slices, so the tolerated
-   branch is unreachable there and only the fake can drive it. That makes
-   these two cases assertions about the policy, not recordings of a slice
-   reply; test/e2e/test_down_missing_units.ml holds the observable
-   contract against real systemd. *)
+   These tests arm it on a .slice, where real systemd answers something
+   else entirely (test/e2e/test_down_missing_units.ml records what). So
+   they assert the policy — this reply is tolerated, wherever it arrives
+   from — and only the fake can drive them. *)
 let arm_no_such_unit_stop handle ~unit_ =
   Systemctl.In_mem.fail_next_stop handle ~unit:unit_
     ~error_name:(Some Systemctl.Bus_errors.no_such_unit)

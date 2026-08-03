@@ -372,37 +372,59 @@ let test_wait_service_inactive_no_job_is_terminal () =
   Alcotest.check result_state_testable "state = Inactive (terminal)"
     `Inactive row.state
 
-(* pctl-a7p / pctl-q2j: a bus failure on the state read must reach the
- * caller. Before the narrowing, [unit_state] answered Inactive for any
- * Pctl_error, so this wait returned a terminal Inactive row — a running
- * service reported as stopped, with nothing saying a call had failed.
+(* pctl-a7p / pctl-q2j: a bus failure on either state read must reach the
+ * caller. Before the narrowing, [unit_state] answered Inactive and
+ * [unit_job_pending] answered false for any Pctl_error, so the wait
+ * returned a terminal Inactive row — a service systemd was about to start
+ * reported as terminated, with nothing saying a call had failed.
  *
- * The read that fails here is the initial one inside [wait_unit_state]
- * (probe.ml), which is the only one on the raising path: a failure inside
- * the subscription callback is reported and dropped by the Dbus handler
- * instead, which is tracked by pctl-vv4. *)
-let test_wait_service_read_failure_propagates () =
+ * Both reads on [wait_unit_state]'s synchronous initial path are covered
+ * below: it reads [unit_state], then [try_resolve] runs in the same fiber
+ * and an Inactive reading sends it into [unit_job_pending]. The
+ * subscription-callback path is the one that cannot raise to a caller —
+ * the Dbus handler reports and drops it there (pctl-vv4). *)
+let peer_gone_reply =
+  Systemctl.Bus_errors.no_reply ^ ": Remote peer disconnected"
+
+let expect_read_failure_propagates ~arm ~what =
   eio_run @@ fun ~sw ~env ->
   let sc = In_mem.connect ~sw env in
   let svc = svc_no_probe "web" in
-  let unit_name = service_unit "web" in
-  In_mem.push_state sc ~unit:unit_name Schema.Active;
-  In_mem.fail_next_read sc ~unit:unit_name
-    ~error_name:(Some Systemctl.Bus_errors.no_reply)
-    ~reply:(Systemctl.Bus_errors.no_reply ^ ": Remote peer disconnected");
+  arm sc ~unit:(service_unit "web");
   let deadline = mono_now_plus ~seconds:5 env in
   match
     P.wait_service ~sw ~env ~handle:sc ~id ~host ~service_name:"web"
       ~service:svc ~overall_deadline_mono:deadline
   with
   | row ->
-      Alcotest.failf "expected the bus failure to propagate, got state %s"
+      Alcotest.failf "%s: expected propagation, got state %s" what
         (Schema.result_state_to_string row.state)
   | exception Schema.Pctl_error (Schema.Unit_op_failed { error_name; _ }) ->
       Alcotest.(check (option string))
-        "carries the peer-gone name, not a state"
+        (what ^ ": carries the peer-gone name, not a state")
         (Some Systemctl.Bus_errors.no_reply)
         error_name
+
+let test_wait_service_unit_state_failure_propagates () =
+  expect_read_failure_propagates ~what:"unit_state" ~arm:(fun sc ~unit ->
+      In_mem.push_state sc ~unit Schema.Active;
+      In_mem.fail_next_unit_state sc ~unit
+        ~error_name:(Some Systemctl.Bus_errors.no_reply)
+        ~reply:peer_gone_reply)
+
+(* The read pctl-q2j argued matters most: an Inactive unit is terminal only
+ * when no job is pending, so a swallowed fault here ends the wait early on
+ * a wrong answer rather than late on a timeout. Reached by leaving the
+ * unit Inactive with a job queued, exactly as systemd leaves a unit whose
+ * Requires= has not cleared. *)
+let test_wait_service_job_pending_failure_propagates () =
+  expect_read_failure_propagates ~what:"unit_job_pending"
+    ~arm:(fun sc ~unit ->
+      In_mem.push_state sc ~unit Schema.Inactive;
+      In_mem.set_pending_job sc ~unit;
+      In_mem.fail_next_job_pending sc ~unit
+        ~error_name:(Some Systemctl.Bus_errors.no_reply)
+        ~reply:peer_gone_reply)
 
 (* ------------------------------------------------------------------ *)
 (* Functor — wait_all ordering + Throw_first cancellation               *)
@@ -493,8 +515,10 @@ let () =
             test_wait_service_queued_inactive_waits_for_active;
           Alcotest.test_case "Inactive without pending job is terminal" `Quick
             test_wait_service_inactive_no_job_is_terminal;
-          Alcotest.test_case "a failed state read propagates, not Inactive"
-            `Quick test_wait_service_read_failure_propagates;
+          Alcotest.test_case "a failed unit_state propagates, not Inactive"
+            `Quick test_wait_service_unit_state_failure_propagates;
+          Alcotest.test_case "a failed unit_job_pending propagates, not false"
+            `Quick test_wait_service_job_pending_failure_propagates;
         ] );
       ( "wait_all",
         [
