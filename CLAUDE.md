@@ -4,7 +4,7 @@ Declarative Nix spec → systemd `--user` unit materializer.
 
 ## Terminology
 
-**Read [UBIQUITOUS_LANGUAGE.md](./UBIQUITOUS_LANGUAGE.md) before writing code or docs.** It defines every domain term (**project**, **slice**, **store tree**, **drop-in**, **manifest**, **project id**, **host**, **registry**, **worktree**, reload actions `+/~/=/-`) and flags terms that look generic but have a specific meaning here (e.g. **host** always means the allocated 127.0.0.N, not the dev machine).
+**Read [UBIQUITOUS_LANGUAGE.md](./UBIQUITOUS_LANGUAGE.md) before writing code or docs.** It defines every domain term (**project**, **slice**, **spec file**, **drop-in**, **manifest**, **project id**, **host**, **registry**, **registry row**, **boot id**, **session id**, **worktree**, reload actions `+/~/=/-`) and flags terms that look generic but have a specific meaning here (e.g. **host** always means the allocated 127.0.0.N, not the dev machine; **state dir** is systemd's, not pctl's).
 
 ## Layout
 

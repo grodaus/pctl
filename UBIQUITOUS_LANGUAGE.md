@@ -14,7 +14,7 @@ _Implemented across [`lib/cli/`](./lib/cli) command modules; shared state in [`l
 | **Service**       | A single long-running process declared by the spec (`command`, `env`, `dependsOn`, `limits`, `serviceConfig`)| Process, daemon         |
 | **Up**            | Installing units, starting the slice, and starting every service in the project                              | Start, launch           |
 | **Reload**        | Recomputing the spec, diffing against the stored manifest, and minimally restarting changed services         | Restart, rebuild        |
-| **Down**          | Stopping the slice, removing installed units, dropping the registry entry                                    | Stop, teardown          |
+| **Down**          | Stopping the slice, removing installed units, and clearing the session-scoped columns of the **registry row** — the row itself stays | Stop, teardown          |
 
 ## Artifacts
 
@@ -28,6 +28,7 @@ _Rendered by [`lib/render/`](./lib/render); written to disk by [`lib/unit_store/
 | **Drop-in**     | The `pctl-runtime.conf` file pctl writes into `<unit>.d/` carrying **PCTL_ID** (+ **PCTL_HOST** on services)                | Override, extension          |
 | **Manifest**    | `{ unit-filename: sha256 }` snapshot persisted on `up`/`reload`, used as the left side of the next reload diff              | Hash map, lock file          |
 | **User.control**| `$XDG_RUNTIME_DIR/systemd/user.control/` — the live unit directory systemd --user reads, owned by `Unit_store.Fs`          | Runtime dir, unit dir        |
+| **State dir**   | A directory systemd creates from a service's `StateDirectory=`, named by a **logical suffix**                               | StateDirectory, data dir     |
 
 ## Identity & allocation
 
@@ -37,25 +38,30 @@ _Derived by [`lib/identity/`](./lib/identity) (project id + host allocation); un
 | ---------------- | -------------------------------------------------------------------------------------------------------------- | ---------------------- |
 | **Project id**   | `<sanitized_basename>_<hash8>` deterministically derived from **project path**; appears in every unit name     | Name, slug             |
 | **Host**         | A `127.0.0.N` address allocated per project so concurrent projects never race on ports                         | IP, address            |
-| **Registry**     | Per-project state at `$XDG_RUNTIME_DIR/pctl/projects/<id>/`: `path`, `host`, `manifest.nuon`, `started_at`. Session-scoped — cleared on reboot. | Store, database |
-| **Known marker** | Persistent per-project file at `$XDG_STATE_HOME/pctl/known/<id>` containing the absolute **project path**. Written on `up`, untouched by `down`, survives reboot. The only signal **gc** uses to tell a live project's state from garbage. | —           |
+| **Registry**     | pctl's SQLite database under `$XDG_STATE_HOME` — one **registry row** per project plus its **manifest** rows. Survives reboot; a **session reset** clears the session-scoped columns instead. | Store, state dir |
+| **Registry row** | One project's row in the **registry**: **project id** and **project path**, which are durable, plus the session-scoped **host**, `started_at`, **spec file**, **session id** and spec JSON. Only **gc** deletes one. | Registry entry, marker |
 | **PCTL_ID**      | Env var set in every drop-in exposing the **project id** to the service process                                | —                      |
 | **PCTL_HOST**    | Env var set in service drop-ins exposing the allocated **host** to the service process                         | —                      |
 | **Workspace**    | Per-service spec field `{ cwd?, writable? }` opting into `WorkingDirectory=<project path>` and a `ProtectHome=tmpfs` + `BindPaths=<project path>` write-through. The OCaml renderer computes these values from the flag — users don't write paths directly. | —                      |
 | **Logical suffix** | A **service_config** value like `StateDirectory = "pg"` that the OCaml renderer expands to `pctl-<project id>-pg` at install time. Applied to `StateDirectory` / `RuntimeDirectory` / `CacheDirectory` / `LogsDirectory` / `ConfigurationDirectory`. Replaces the pre-v2 `@@PROJECT@@` placeholder convention. | — |
 | **Worktree**     | A distinct project path (e.g. a git worktree) whose identity-from-path rule guarantees a distinct **project id**, **slice**, and **host** — letting siblings coexist | Copy, clone |
 
-## Garbage collection
+## Session & garbage collection
 
-_Implemented in [`lib/gc/`](./lib/gc); known markers written alongside the registry under [`lib/state/`](./lib/state)._
+_**Boot id** read by [`lib/clock/`](./lib/clock); **session reset** in [`lib/state/`](./lib/state) (`Session.reset`); classification and removal in [`lib/gc/`](./lib/gc)._
 
 | Term             | Definition                                                                                                                                | Aliases to avoid        |
 | ---------------- | ----------------------------------------------------------------------------------------------------------------------------------------- | ----------------------- |
-| **State dir**    | A directory under `$XDG_STATE_HOME` systemd creates from a service's `StateDirectory=<logical suffix>` (the renderer expands it to `pctl-<project id>-<suffix>`) — persists across `down` | StateDirectory, data dir |
-| **Gc**           | `pctl gc` — classifies every **state dir** by cross-referencing **known markers**; `--yes` deletes only classified-orphan dirs            | Cleanup, purge          |
-| **Live (gc)**    | A **state dir** whose **known marker** points at a **project path** that still exists on disk — kept                                      | Active                  |
-| **Orphan (gc)** | A **state dir** whose **known marker** points at a **project path** that no longer exists — the only class `gc --yes` deletes             | Stale, dead             |
-| **Unknown (gc)**| A **state dir** with no **known marker** — pre-existing leak or third-party `pctl-*` directory; reported only, never deleted automatically | Foreign                 |
+| **Boot id**      | The kernel's per-boot UUID from `/proc/sys/kernel/random/boot_id`                                                                          | Machine id              |
+| **Session id**   | The **boot id** stamped onto a **registry row** by `up` and `reload`. Equal to the current **boot id** ⇒ `up` or `reload` ran for the project on this boot | Run id      |
+| **Session reset**| The first query on `projects` in any invocation that opens the **registry**, run immediately after migrations: NULL the session-scoped columns of every **registry row** whose **session id** is set but does not match the current **boot id**. Leaves **project id** and **project path**. | Reboot cleanup |
+| **Gc**           | `pctl gc` — classifies every **registry row** as **Live**, **Orphan** or **Unknown**. Reports by default; `--yes` runs a **purge**         | Cleanup                 |
+| **Unknown (gc)** | A **registry row** whose **project path** no longer exists on disk — removed by the **opportunistic sweep** and by a **purge**             | Foreign                 |
+| **Live (gc)**    | A **registry row** whose **project path** exists and whose **session id** is the current **boot id** — kept by every gc path               | Active                  |
+| **Orphan (gc)**  | A **registry row** whose **project path** exists but whose **session id** is not the current **boot id** — left alone by the **opportunistic sweep**, removed by a **purge** | Stale, dead |
+| **Remove (gc)**  | Removal of a **registry row** together with the units it owns                                                                              | Delete, wipe            |
+| **Opportunistic sweep** | The **Unknown**-only removal pctl runs at the top of every mutating command (`up`/`reload`/`down`/`restart`). Skipped entirely when `PCTL_NO_GC=1`. | Auto-gc          |
+| **Purge**        | `pctl gc --yes` — removal of every non-**Live** row, so **Orphan** as well as **Unknown**. Not affected by `PCTL_NO_GC`                   | Prune                   |
 
 ## Reload diff
 
@@ -96,7 +102,8 @@ _Three layers in [`test/unit/`](./test/unit), [`test/integration/`](./test/integ
 - A **Project** owns one **Slice** and zero-or-more **Service** units; every **Service** runs inside its **Project**'s **Slice**.
 - `mkProject` produces one **Spec file** per **Spec**; `up` and `reload` both consume a **Spec file**.
 - Each installed **Unit** has exactly one **Drop-in** carrying runtime env (**PCTL_ID** on all, **PCTL_HOST** on services only).
-- `up` writes one **Registry** entry and one **Manifest**; `reload` reads the **Manifest**, computes a **Plan**, then rewrites both.
+- `up` writes one **Registry row** and one **Manifest**; `reload` reads the **Manifest**, computes a **Plan**, then rewrites both.
+- A **Registry row** outlives both `down` and a reboot; **Gc** is the only thing that deletes one.
 - Two **Worktrees** of the same repo have distinct **Project ids** and **Hosts** and therefore distinct **Slices** that coexist on one `systemd --user` session.
 
 ## Example dialogue
@@ -115,12 +122,13 @@ _Three layers in [`test/unit/`](./test/unit), [`test/integration/`](./test/integ
 
 > **Dev:** "What if I have two **worktrees** of the same repo checked out?"
 
-> **Domain expert:** "Each has a distinct **project path**, so each gets a distinct **project id**, **host**, **slice**, and **registry** entry. They share the `systemd --user` session but never collide — that's the whole point of hashing the path into the **project id**."
+> **Domain expert:** "Each has a distinct **project path**, so each gets a distinct **project id**, **host**, **slice**, and **registry row**. They share the `systemd --user` session but never collide — that's the whole point of hashing the path into the **project id**."
 
 ## Flagged ambiguities
 
 - **"Tree"** in conversation historically meant `mkProject`'s `/nix/store` output. Since the OCaml rewrite, `mkProject` is a `writeText` derivation whose outpath IS the `spec.json` file — no directory. Canonical term is **Spec file**; avoid "store tree", "tree", "bundle" in code comments and docs.
 - **"Unit"** in systemd vocabulary covers services, slices, targets, sockets, timers, etc. In pctl we only emit **Slice** and **Service** units — when the distinction matters, use the specific noun; use **Unit** only for the union.
 - **"Host"** is overloaded: the machine running pctl vs. the allocated `127.0.0.N`. In pctl code and docs, **Host** always means the allocated loopback address; for the machine, use "host system" or "dev host".
-- **"Registry"** might suggest an OCI or Nix flake registry. Here it's strictly the per-project state directory under `$XDG_RUNTIME_DIR/pctl/projects/`. Consider renaming later if the term confuses users.
+- **"Registry"** might suggest an OCI or Nix flake registry. Here it's strictly pctl's SQLite state database. Consider renaming later if the term confuses users.
+- **"State dir"** belongs to a service, not to pctl. pctl's own state is the **Registry**; a **State dir** is systemd's, created from a **Logical suffix**. **Gc** classifies and removes **Registry rows** — it never looks at a **State dir**.
 - **"Id"** in code is always **Project id**. No other identifier in the system is called "id", so the short form is safe internally; prefer the full term in user-facing output.
