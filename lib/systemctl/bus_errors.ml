@@ -19,13 +19,28 @@
  * BUS_ERROR_NO_SUCH_UNIT, "Unit x.service not loaded." Callers tolerate
  * exactly this "there was nothing there" failure and propagate the rest.
  *
- * Whether an op can answer it at all depends on whether that op LOADS the
- * name first (GENERIC_UNIT_LOAD, src/core/dbus-manager.c): a loading op
- * cannot reach the error for a name systemd is willing to synthesise.
- * StopUnit loads, ResetFailedUnit does not — so they disagree per unit
- * type, and which types those are is recorded in
- * test/e2e/test_down_missing_units.ml against real systemd. [Lifecycle]'s
- * down path is the caller that depends on it.
+ * Two different guards produce it, so the two ops pctl calls disagree
+ * about which units can answer it:
+ *
+ *   - StopUnit always loads the name (method_stop_unit →
+ *     method_start_unit_generic → manager_load_unit), and loading a
+ *     missing file SUCCEEDS with load_state = not-found. The reply comes
+ *     later, from the JOB_STOP-specific guard in
+ *     unit_queue_job_check_and_mangle_type: load error AND currently
+ *     inactive. A unit systemd synthesises is not a load error, so it
+ *     takes the job instead.
+ *   - ResetFailedUnit does not load at all (method_generic_unit_operation
+ *     with flags = 0 → bus_get_unit_by_name), so any name not currently
+ *     loaded answers the reply.
+ *
+ * Read in the v260.1 tree, which is what this host runs. Function names
+ * rather than line numbers on purpose: the StopUnit guard moved out of
+ * bus_unit_queue_job_one into unit.c between 257 and 260 without changing
+ * its test.
+ *
+ * Which units those are per op is recorded against real systemd in
+ * test/e2e/test_down_missing_units.ml. [Lifecycle]'s down path is the
+ * caller that depends on it.
  *
  * "Already not failed" is not an error reply at all — unit_reset_failed
  * on a healthy unit just succeeds (bus_unit_method_reset_failed,

@@ -715,7 +715,13 @@ let state_of_active_string ~unit:u = function
  * propagates: substituting a state for it would answer the caller with a
  * plausible wrong value — a bus fault during a `daemon-reexec` window
  * would report every unit as Inactive, i.e. a running service as
- * stopped, with nothing anywhere saying a call had failed. *)
+ * stopped, with nothing anywhere saying a call had failed.
+ *
+ * Guarded by test/e2e/test_unit_state_survives_reexec.ml, and only there:
+ * the fake cannot issue this call, so no sandbox-safe test can fail if
+ * this catch is widened. That test needs a real peer-gone reply to land on
+ * this GetUnit specifically, so it is statistical per run — read its
+ * header before trusting a single green run of it. *)
 let get_unit_path_opt t ~unit:u =
   try Some (get_unit_path t ~unit:u)
   with Schema.Pctl_error e when Bus_errors.is_no_such_unit e -> None

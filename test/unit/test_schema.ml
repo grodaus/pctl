@@ -311,9 +311,18 @@ let test_error_rendering () =
         "install failed for /dst: eacces" );
       ( Bus_connect_failed { msg = "no socket" },
         "sd-bus connect failed: no socket" );
+      (* [op] is a D-Bus method name, which is what the Dbus adapter
+         raises — see lib/systemctl/dbus.ml. The rendering is odd for it
+         ("systemctl StartUnit …", tracked by pctl-19n); a fabricated
+         lowercase verb here would hide that rather than fix it. *)
       ( Unit_op_failed
-          { op = "start"; unit_ = "x.service"; error_name = None; reply = "nope" },
-        "systemctl start x.service failed: nope" );
+          {
+            op = "StartUnit";
+            unit_ = "x.service";
+            error_name = None;
+            reply = "nope";
+          },
+        "systemctl StartUnit x.service failed: nope" );
       ( Probe_timeout { service = "pg"; timeout_ms = 1000 },
         "probe for service pg timed out after 1000 ms" );
       ( Identity_invalid { path = "/p"; reason = "bad" },

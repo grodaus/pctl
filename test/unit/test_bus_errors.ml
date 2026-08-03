@@ -5,7 +5,14 @@
  * that no display string can move a verdict: the same failure rendered
  * differently, and a message that merely quotes a name, must classify the
  * same way as before. That is what the earlier prefix-on-[reply] test
- * could not state. *)
+ * could not state.
+ *
+ * THE RULE FOR THIS FILE: every wire name is written out as a literal
+ * here, never taken from [Bus_errors]. This is the recording of the
+ * vocabulary — feeding a constant into the predicate that compares against
+ * it asserts only that equality works, and leaves a typo'd constant green.
+ * Everywhere else in the repo references [Bus_errors]; the values
+ * themselves are pinned here and nowhere else. *)
 
 open Systemctl
 
@@ -25,14 +32,18 @@ let test_is_no_such_unit () =
       expect
       (Bus_errors.is_no_such_unit e)
   in
+  (* Literal, per the rule in this file's header. *)
+  let no_such_unit = "org.freedesktop.systemd1.NoSuchUnit" in
+  Alcotest.(check string)
+    "Bus_errors.no_such_unit is the name systemd answers with"
+    no_such_unit Bus_errors.no_such_unit;
   check true
-    (err ~error_name:Bus_errors.no_such_unit
-       ~reply:"org.freedesktop.systemd1.NoSuchUnit: Unit x.service not loaded."
+    (err ~error_name:no_such_unit
+       ~reply:(no_such_unit ^ ": Unit x.service not loaded.")
        ());
   (* Rendering is irrelevant to the verdict — same name, no message. *)
   check true
-    (err ~error_name:Bus_errors.no_such_unit
-       ~reply:"org.freedesktop.systemd1.NoSuchUnit (no message)" ());
+    (err ~error_name:no_such_unit ~reply:(no_such_unit ^ " (no message)") ());
   (* Equality, not prefix: nothing longer than the name is tolerated. *)
   check false (err ~error_name:"org.freedesktop.systemd1.NoSuchUnitXxx" ());
   check false (err ~error_name:"org.freedesktop.systemd1.JobTypeNotApplicable" ());

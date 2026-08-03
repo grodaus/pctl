@@ -454,10 +454,12 @@ Each phase ends with a working branch tip. No commits until a phase is green (pe
 | In-process     | `test/integration/`      | alcotest-eio + Fake Systemctl | Yes          |
 | Reality (e2e)  | `test/e2e/` (alias e2e)  | alcotest-eio + real systemd   | No           |
 
-Fake Systemctl adapter (layer 2):
+Fake Systemctl adapter (layer 2) — `Systemctl.In_mem`:
 - Hashtbl keyed by unit name → state.
 - `start_unit` transitions `inactive → activating → active` with Eio sleeps so subscribers see transitions.
-- Test-only API: `Fake.fail_next_start`, `Fake.push_state`, `Fake.inspect`.
+- Its test-only fault-injection and inspection API is listed in that
+  module's own header; it has grown since this plan was written, so the
+  code is the list.
 
 ## Risks + open questions
 
