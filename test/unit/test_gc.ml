@@ -288,7 +288,7 @@ let test_purge_preserves_live_rows () =
    units left to manage them, unreachable by [pctl down] or a later
    [pctl gc]. Because gc is a multi-row loop, the failure is reported
    for that row only and the remaining projects are still purged. *)
-let stop_failure_name = "org.freedesktop.DBus.Error.NoReply"
+let stop_failure_name = Systemctl.Bus_errors.no_reply
 
 let stop_failure_reply = stop_failure_name ^ ": Remote peer disconnected"
 
@@ -305,7 +305,7 @@ let test_describe_exn_renders_pctl_error () =
     Schema.Pctl_error
       (Schema.Unit_op_failed
          {
-           op = "stop";
+           op = "StopUnit";
            unit_ = "pctl-x.slice";
            error_name = Some stop_failure_name;
            reply = stop_failure_reply;
@@ -313,7 +313,7 @@ let test_describe_exn_renders_pctl_error () =
   in
   Alcotest.(check string)
     "renders the systemctl failure"
-    ("systemctl stop pctl-x.slice failed: " ^ stop_failure_reply)
+    ("systemctl StopUnit pctl-x.slice failed: " ^ stop_failure_reply)
     (Gc.describe_exn e);
   (* The property the helper exists for: the stdlib rendering drops the
      payload, so the warning would name no unit and no reply. *)

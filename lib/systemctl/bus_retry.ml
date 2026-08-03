@@ -28,10 +28,10 @@
  *
  * A genuine call timeout is NOT one of these and needs no special
  * handling: pctl calls sd_bus_call_method, and the synchronous
- * sd_bus_call it lands in returns -ETIMEDOUT, which
- * sd_bus_error_set_errno resolves through errno_to_bus_error_const to
- * org.freedesktop.DBus.Error.Timeout / "Timed out" (bus-error.c). The
- * NoReply / "Method call timed out" synthesis in sd-bus.c is inside
+ * sd_bus_call it lands in returns -ETIMEDOUT, which arrives named
+ * org.freedesktop.DBus.Error.Timeout / "Timed out" (errno_to_bus_error_const,
+ * bus-error.c — see [Bus_errors] for that naming path). The NoReply /
+ * "Method call timed out" synthesis in sd-bus.c is inside
  * process_timeout(), i.e. the ASYNC callback path, which pctl does not
  * use. Checked against systemd 260.1.
  *

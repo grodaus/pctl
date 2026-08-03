@@ -102,13 +102,9 @@ module Sd_bus_error = struct
         done;
         Some (Bytes.unsafe_to_string b)
 
-  (* (name, message) — either field may be NULL, hence the options. In
-   * practice sd-bus names every failure it reports: an error reply
-   * carries the peer's name (e.g. org.freedesktop.systemd1.NoSuchUnit),
-   * and a locally-generated failure goes through
-   * sd_bus_error_set_errno, which always sets one. See
-   * [Bus_retry.is_peer_gone] for why the classifier nonetheless keeps
-   * a [None] arm. *)
+  (* (name, message) — either field may be NULL, hence the options. See
+   * [Bus_errors.is_peer_gone] for why sd-bus names nearly every failure
+   * it reports and what is left for the [None] arm. *)
   let parts s = (decode (C.getf s name_f), decode (C.getf s message_f))
 end
 
@@ -339,11 +335,8 @@ let format_sd_bus_err op rc =
  * grep-friendly D-Bus name; classification uses the name field on the
  * error, never this string.
  *
- * Transport failures do NOT leave the struct empty: every [fail:] path
- * in sd_bus_call_methodv / sd_bus_call runs sd_bus_error_set_errno, so
- * even a closed bus arrives named ("System.Error.ENOTCONN"). The
- * [None, None] arm is therefore near-unreachable and the errno decode
- * is a backstop, not the usual transport case — see [Bus_errors]. *)
+ * The [None, None] arm is a backstop, not the usual transport case: a
+ * closed bus arrives named too — see [Bus_errors.is_peer_gone]. *)
 let format_bus_reply ~op ~parts rc =
   match parts with
   | Some name, Some message -> Printf.sprintf "%s: %s" name message
@@ -646,8 +639,9 @@ let () = manager_unsubscribe_forward := manager_unsubscribe_best_effort
  * swallowing a transport failure here leaves it in place while telling
  * the caller it was cleared.
  *
- * "Already not failed" is not a failure to tolerate — it succeeds. See
- * [Bus_errors.no_such_unit] for both, checked on systemd 260.1. *)
+ * See [Bus_errors.no_such_unit] for which names this op can answer — it
+ * does not load the unit, so unlike StopUnit it reaches that reply for a
+ * slice too. *)
 let reset_failed_unit t ~unit:u =
   with_error @@ fun err ->
   with_reply @@ fun reply ->

@@ -100,9 +100,7 @@ module Make (M : Systemctl.S) (US : Unit_store.S) = struct
        - [Changed] on a slice row is a no-op: bouncing the slice
          would restart every service under it, which is never what
          [pctl reload] means.
-       - [Removed] tolerates a no-such-unit stop reply — systemd may
-         have already GCed the unit after its file was deleted.
-         Everything else propagates. *)
+       - [Removed] tolerates one stop reply and no more — see the arm. *)
   let is_slice_unit (r : Schema.plan_row) : bool =
     let s = Schema.Unit_filename.to_string r.unit_ in
     let n = String.length s in

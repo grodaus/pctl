@@ -182,12 +182,18 @@ let test_reload_one_service_changed () =
    an assertion on it pins a label that exists in production. *)
 let arm_failing_stop handle ~unit_ =
   Systemctl.In_mem.fail_next_stop handle ~unit:unit_
-    ~error_name:(Some "org.freedesktop.DBus.Error.NoReply")
-    ~reply:"org.freedesktop.DBus.Error.NoReply: Remote peer disconnected"
+    ~error_name:(Some Systemctl.Bus_errors.no_reply)
+    ~reply:(Systemctl.Bus_errors.no_reply ^ ": Remote peer disconnected")
 
-(* The one stop failure the lifecycle tolerates, as systemd words it —
-   recorded against systemd 260.1, `dbus-send --session --print-reply …
-   Manager.StopUnit` on an unloaded unit. *)
+(* The one stop failure the lifecycle tolerates, worded as systemd words
+   it for a .service (see [Systemctl.Bus_errors.no_such_unit]).
+
+   For the .slice these tests arm, StopUnit on this systemd SUCCEEDS
+   instead — systemd synthesises fragment-less slices, so the tolerated
+   branch is unreachable there and only the fake can drive it. That makes
+   these two cases assertions about the policy, not recordings of a slice
+   reply; test/e2e/test_down_missing_units.ml holds the observable
+   contract against real systemd. *)
 let arm_no_such_unit_stop handle ~unit_ =
   Systemctl.In_mem.fail_next_stop handle ~unit:unit_
     ~error_name:(Some Systemctl.Bus_errors.no_such_unit)

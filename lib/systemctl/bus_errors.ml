@@ -19,11 +19,22 @@
  * BUS_ERROR_NO_SUCH_UNIT, "Unit x.service not loaded." Callers tolerate
  * exactly this "there was nothing there" failure and propagate the rest.
  *
- * Verified on systemd 260.1: Manager.StopUnit and Manager.ResetFailedUnit
- * on an unloaded unit both answer this name (dbus-send --session
- * --print-reply). ResetFailedUnit on a loaded unit that is not failed
- * succeeds — "not failed" is not an error reply at all
- * (bus_unit_method_reset_failed, src/core/dbus-unit.c). *)
+ * Which ops can answer it depends on whether the op LOADS the name first
+ * (GENERIC_UNIT_LOAD, src/core/dbus-manager.c). StopUnit does, so a name
+ * systemd can synthesise never reaches the error — an unloaded .service
+ * answers this name, an unloaded .slice succeeds and returns a job path.
+ * ResetFailedUnit does not load, so it answers this name for anything not
+ * currently loaded, slice included. Both measured on systemd 260.1 with
+ * `dbus-send --session --print-reply`.
+ *
+ * The slice half of that is what test/e2e/test_down_missing_units.ml
+ * exists for: it holds the observable contract for the one caller that
+ * stops a SLICE under this tolerance ([Lifecycle]'s down path), which on
+ * this systemd never reaches it.
+ *
+ * "Already not failed" is not an error reply at all — unit_reset_failed
+ * on a healthy unit just succeeds (bus_unit_method_reset_failed,
+ * src/core/dbus-unit.c). *)
 let no_such_unit = "org.freedesktop.systemd1.NoSuchUnit"
 
 let error_name : Schema.error -> string option = function
@@ -44,9 +55,14 @@ let is_no_such_unit (e : Schema.error) : bool =
  * ENETRESET, i.e. our own socket died. Asking again on a dead handle
  * cannot succeed, and would replace a truthful "Disconnected" with
  * whatever the second attempt reports instead. *)
+(* Named on its own because it is the one actually observed on this host
+ * (dbus-broker's driver_goodbye reply, see [Bus_retry]) and so the one a
+ * test wants to reproduce. *)
+let no_reply = "org.freedesktop.DBus.Error.NoReply"
+
 let peer_gone_error_names =
   [
-    "org.freedesktop.DBus.Error.NoReply";
+    no_reply;
     "org.freedesktop.DBus.Error.ServiceUnknown";
     "org.freedesktop.DBus.Error.NameHasNoOwner";
   ]

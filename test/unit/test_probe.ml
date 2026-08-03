@@ -372,6 +372,38 @@ let test_wait_service_inactive_no_job_is_terminal () =
   Alcotest.check result_state_testable "state = Inactive (terminal)"
     `Inactive row.state
 
+(* pctl-a7p / pctl-q2j: a bus failure on the state read must reach the
+ * caller. Before the narrowing, [unit_state] answered Inactive for any
+ * Pctl_error, so this wait returned a terminal Inactive row — a running
+ * service reported as stopped, with nothing saying a call had failed.
+ *
+ * The read that fails here is the initial one inside [wait_unit_state]
+ * (probe.ml), which is the only one on the raising path: a failure inside
+ * the subscription callback is reported and dropped by the Dbus handler
+ * instead, which is tracked by pctl-vv4. *)
+let test_wait_service_read_failure_propagates () =
+  eio_run @@ fun ~sw ~env ->
+  let sc = In_mem.connect ~sw env in
+  let svc = svc_no_probe "web" in
+  let unit_name = service_unit "web" in
+  In_mem.push_state sc ~unit:unit_name Schema.Active;
+  In_mem.fail_next_read sc ~unit:unit_name
+    ~error_name:(Some Systemctl.Bus_errors.no_reply)
+    ~reply:(Systemctl.Bus_errors.no_reply ^ ": Remote peer disconnected");
+  let deadline = mono_now_plus ~seconds:5 env in
+  match
+    P.wait_service ~sw ~env ~handle:sc ~id ~host ~service_name:"web"
+      ~service:svc ~overall_deadline_mono:deadline
+  with
+  | row ->
+      Alcotest.failf "expected the bus failure to propagate, got state %s"
+        (Schema.result_state_to_string row.state)
+  | exception Schema.Pctl_error (Schema.Unit_op_failed { error_name; _ }) ->
+      Alcotest.(check (option string))
+        "carries the peer-gone name, not a state"
+        (Some Systemctl.Bus_errors.no_reply)
+        error_name
+
 (* ------------------------------------------------------------------ *)
 (* Functor — wait_all ordering + Throw_first cancellation               *)
 (* ------------------------------------------------------------------ *)
@@ -461,6 +493,8 @@ let () =
             test_wait_service_queued_inactive_waits_for_active;
           Alcotest.test_case "Inactive without pending job is terminal" `Quick
             test_wait_service_inactive_no_job_is_terminal;
+          Alcotest.test_case "a failed state read propagates, not Inactive"
+            `Quick test_wait_service_read_failure_propagates;
         ] );
       ( "wait_all",
         [

@@ -24,7 +24,10 @@ let mk_clock () =
   in
   (now, sleep, (fun () -> List.rev !slept), advance)
 
-let no_reply = "org.freedesktop.DBus.Error.NoReply"
+(* Both names come from the vocabulary Bus_errors owns: this file tests the
+   loop, not the classification, so fabricating wire values here would pin
+   strings nothing else in the repo agrees with. *)
+let no_reply = Bus_errors.no_reply
 let budget = 1.0
 let delay = 0.25
 
@@ -64,7 +67,7 @@ let test_retries_peer_gone_until_success () =
 let test_does_not_retry_other_errors () =
   let now, sleep, slept, _ = mk_clock () in
   let calls = ref 0 in
-  let no_such_unit = Some "org.freedesktop.systemd1.NoSuchUnit" in
+  let no_such_unit = Some Bus_errors.no_such_unit in
   let r =
     run ~now ~sleep ~retry_on:retry_on_name (fun () ->
         incr calls;

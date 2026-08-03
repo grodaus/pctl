@@ -93,14 +93,13 @@ type error =
   | Nix_build_failed of { expr : string; exit_code : int; stderr : string }
   | Install_failed of { path : string; reason : string }
   | Bus_connect_failed of { msg : string }
-  (* [error_name] is the D-Bus error name the peer replied with, e.g.
-   * "org.freedesktop.systemd1.NoSuchUnit" or, for a locally-generated
-   * failure that sd_bus_error_set_errno named, "System.Error.ENOTCONN".
-   * It is what callers classify on — see [Systemctl.Bus_errors].
-   * [None] means no name was available: a failure that never reached
-   * sd-bus (an unparseable ActiveState, a wait that ended in the wrong
-   * state) or the near-unreachable empty-struct reply. [reply] is for
-   * rendering only and must never be classified on. *)
+  (* [error_name] is the D-Bus error name the reply carried, e.g.
+   * "org.freedesktop.systemd1.NoSuchUnit". It is what callers classify
+   * on — [Systemctl.Bus_errors] owns the vocabulary and says which names
+   * are reachable. [None] means the failure carried no name: one that
+   * never reached sd-bus (an unparseable ActiveState, a wait that ended
+   * in the wrong state). [reply] is for rendering only and must never be
+   * classified on. *)
   | Unit_op_failed of {
       op : string;
       unit_ : string;

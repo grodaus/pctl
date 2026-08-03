@@ -11,6 +11,8 @@
  *
  * Test-only APIs are exposed alongside the SYSTEMCTL surface:
  *   - [fail_next_start]     force the next [start_unit] to end in Failed
+ *   - [fail_next_stop]      force the next [stop_unit] to raise
+ *   - [fail_next_read]      force the next state read to raise
  *   - [push_state]          directly inject a state (fires subscribers)
  *   - [inspect]             dump (unit, state) pairs
  *   - [subscribers_count]   leak check
@@ -34,6 +36,12 @@ type t = {
          entry is removed on fire so repeated calls don't keep raising.
          The name is what [Bus_errors] classifies on, so a test injecting
          a failure must say which one it is injecting. *)
+  fail_next_read : (string, string option * string) Hashtbl.t;
+      (* unit → (error_name, reply) for the next [unit_state] or
+         [unit_job_pending]. Same one-shot shape as [fail_next_stop].
+         Both reads are one GetUnit in the Dbus adapter, which is where a
+         peer-gone reply lands during a daemon-reexec, so the fake models
+         them as failing together. *)
   pending_jobs : (string, unit) Hashtbl.t;
       (* unit → pending start-job marker. Test fixtures toggle this to
          model systemd's behaviour on units with Requires=: StartUnit
@@ -50,6 +58,7 @@ let connect ~sw env =
     subscribers = Hashtbl.create 16;
     fail_next = Hashtbl.create 4;
     fail_next_stop = Hashtbl.create 4;
+    fail_next_read = Hashtbl.create 4;
     pending_jobs = Hashtbl.create 4;
   }
 
@@ -150,9 +159,26 @@ let reset_failed_unit t ~unit:u =
   | Schema.Failed -> set_state t u Schema.Inactive
   | _ -> ()
 
-let unit_state t ~unit:u = current_state t u
+(* Both state reads go through GetUnit in the Dbus adapter, and since
+ * pctl-a7p only a no-such-unit reply there is absorbed — everything else
+ * raises. [op] is that method's name so the raised value matches what the
+ * real adapter would produce. *)
+let raise_if_read_armed t ~op ~unit:u =
+  match Hashtbl.find_opt t.fail_next_read u with
+  | None -> ()
+  | Some (error_name, reply) ->
+      Hashtbl.remove t.fail_next_read u;
+      raise
+        (Schema.Pctl_error
+           (Schema.Unit_op_failed { op; unit_ = u; error_name; reply }))
 
-let unit_job_pending t ~unit:u = Hashtbl.mem t.pending_jobs u
+let unit_state t ~unit:u =
+  raise_if_read_armed t ~op:"GetUnit" ~unit:u;
+  current_state t u
+
+let unit_job_pending t ~unit:u =
+  raise_if_read_armed t ~op:"GetUnit" ~unit:u;
+  Hashtbl.mem t.pending_jobs u
 
 let subscribe_unit_changes t ~unit:u cb =
   let r = subscribers_for t u in
@@ -168,6 +194,13 @@ let fail_next_start t ~unit:u = Hashtbl.replace t.fail_next u ()
  * real adapter never produces. *)
 let fail_next_stop t ~unit:u ~error_name ~reply =
   Hashtbl.replace t.fail_next_stop u (error_name, reply)
+
+(* Arm the next state read to fail. Exists so a test can drive the
+ * caller-side half of pctl-a7p: that a bus failure reaching [unit_state]
+ * or [unit_job_pending] propagates to whoever asked instead of being
+ * absorbed into a state. *)
+let fail_next_read t ~unit:u ~error_name ~reply =
+  Hashtbl.replace t.fail_next_read u (error_name, reply)
 
 let push_state t ~unit:u state = set_state t u state
 
