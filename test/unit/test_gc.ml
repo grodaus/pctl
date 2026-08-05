@@ -358,6 +358,71 @@ let test_purge_tolerates_no_such_unit_stop () =
   Alcotest.(check (list string)) "DB is empty" [] (ids_sorted conn);
   Alcotest.(check (list string)) "unit files deleted" [] (unit_names_on_disk ())
 
+(* Reload economy (pctl-e0d). What these tests exist to stop: the reload
+   [Gc.remove_project] used to issue, once per removed row, being put
+   back. *)
+let reload_count = Systemctl.In_mem.reload_count
+
+let test_sweep_reloads_once_after_every_row () =
+  with_sandbox @@ fun ~sw:_ ~env:_ ~conn ~handle ~xdg:_ ->
+  upsert_row conn ~id:"gone_a" ~path:"/no/such/path" ~session_id:"stale" ();
+  upsert_row conn ~id:"gone_b" ~path:"/no/such/path" ~session_id:"stale" ();
+  let _ = install_units conn ~id_s:"gone_a" in
+  let _ = install_units conn ~id_s:"gone_b" in
+  G.opportunistic_sweep ~conn ~handle;
+  (* Each slice appears twice because [remove_project] stops it by name
+     and then again as a manifest row — one redundant StopUnit, filed as
+     pctl-gc-double-slice-stop-tmm. The manifest's own order is
+     load_manifest's, which sorts by unit filename ('-' < '.'). *)
+  Alcotest.(check (list string))
+    "both rows' stops, then a single trailing reload"
+    [
+      "stop pctl-gone_a.slice";
+      "stop pctl-gone_a-web.service";
+      "stop pctl-gone_a.slice";
+      "stop pctl-gone_b.slice";
+      "stop pctl-gone_b-web.service";
+      "stop pctl-gone_b.slice";
+      "daemon-reload";
+    ]
+    (Systemctl.In_mem.ops handle)
+
+(* A sweep that removed nothing changed nothing on disk, so it must not
+   reload — see [Gc.opportunistic_sweep] for why that is the case worth
+   protecting. *)
+let test_sweep_removing_nothing_does_not_reload () =
+  with_sandbox @@ fun ~sw:_ ~env:_ ~conn ~handle ~xdg ->
+  upsert_row conn ~id:"keep_orphan" ~path:xdg ~session_id:"stale" ();
+  let _ = install_units conn ~id_s:"keep_orphan" in
+  G.opportunistic_sweep ~conn ~handle;
+  Alcotest.(check (list string))
+    "row survives" [ "keep_orphan" ] (ids_sorted conn);
+  Alcotest.(check int) "no reload" 0 (reload_count handle)
+
+(* Same contract for the explicit purge, which has no lifecycle work
+   after it to reload on its behalf. *)
+let test_purge_reloads_once_after_every_row () =
+  with_sandbox @@ fun ~sw:_ ~env:_ ~conn ~handle ~xdg ->
+  upsert_row conn ~id:"a_orphan" ~path:xdg ~session_id:"stale" ();
+  upsert_row conn ~id:"b_orphan" ~path:xdg ~session_id:"stale" ();
+  let _ = install_units conn ~id_s:"a_orphan" in
+  let _ = install_units conn ~id_s:"b_orphan" in
+  let removed = G.purge ~conn ~handle in
+  Alcotest.(check int) "both rows removed" 2 removed;
+  Alcotest.(check int) "one reload for the run" 1 (reload_count handle);
+  Alcotest.(check bool)
+    "and it is the last op" true
+    (List.nth_opt (List.rev (Systemctl.In_mem.ops handle)) 0
+     = Some "daemon-reload")
+
+let test_purge_removing_nothing_does_not_reload () =
+  with_sandbox @@ fun ~sw:_ ~env:_ ~conn ~handle ~xdg ->
+  let boot = Clock.read_boot_id_exn () in
+  upsert_row conn ~id:"live" ~path:xdg ~session_id:boot ();
+  let removed = G.purge ~conn ~handle in
+  Alcotest.(check int) "nothing to remove" 0 removed;
+  Alcotest.(check int) "no reload" 0 (reload_count handle)
+
 let test_sweep_skips_row_whose_stop_fails () =
   with_sandbox @@ fun ~sw:_ ~env:_ ~conn ~handle ~xdg:_ ->
   upsert_row conn ~id:"a_fails" ~path:"/no/such/path" ~session_id:"stale" ();
@@ -411,6 +476,10 @@ let () =
           Alcotest.test_case "empty DB" `Quick test_sweep_noop_when_empty;
           Alcotest.test_case "stop failure skips only that row" `Quick
             test_sweep_skips_row_whose_stop_fails;
+          Alcotest.test_case "one reload per sweep, after every row" `Quick
+            test_sweep_reloads_once_after_every_row;
+          Alcotest.test_case "sweep removing nothing does not reload" `Quick
+            test_sweep_removing_nothing_does_not_reload;
         ] );
       ( "purge",
         [
@@ -422,6 +491,10 @@ let () =
             test_purge_skips_row_whose_stop_fails;
           Alcotest.test_case "tolerates no-such-unit stop" `Quick
             test_purge_tolerates_no_such_unit_stop;
+          Alcotest.test_case "one reload per run, after every row" `Quick
+            test_purge_reloads_once_after_every_row;
+          Alcotest.test_case "purge removing nothing does not reload" `Quick
+            test_purge_removing_nothing_does_not_reload;
         ] );
       ( "describe_exn",
         [

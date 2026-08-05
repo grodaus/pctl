@@ -126,7 +126,48 @@ let test_daemon_reload_noop () =
   In_mem.daemon_reload sc;
   let after = In_mem.inspect sc in
   Alcotest.(check (list (pair string state_testable)))
-    "daemon_reload does not mutate state" before after
+    "daemon_reload leaves every unit state untouched" before after;
+  (* It is not observationally a no-op, though: it is recorded, which is
+     how callers assert their reload count (pctl-e0d). *)
+  Alcotest.(check (list string))
+    "but it is recorded" [ "daemon-reload" ] (In_mem.ops sc)
+
+(* What can go wrong with [ops]: a mutator that forgets to record, or one
+   that records the pieces it is built from. [restart_unit] is the sole
+   composite. *)
+let test_ops_records_every_mutator_once () =
+  eio_run @@ fun ~sw ~env ->
+  let sc = In_mem.connect ~sw env in
+  In_mem.start_unit sc ~unit:"a.service";
+  In_mem.restart_unit sc ~unit:"a.service";
+  In_mem.stop_unit sc ~unit:"a.service";
+  In_mem.daemon_reload sc;
+  In_mem.reset_failed_unit sc ~unit:"a.service";
+  ignore (In_mem.unit_state sc ~unit:"a.service");
+  ignore (In_mem.unit_job_pending sc ~unit:"a.service");
+  Alcotest.(check (list string))
+    "one entry per mutator, in call order, reads excluded"
+    [
+      "start a.service";
+      "restart a.service";
+      "stop a.service";
+      "daemon-reload";
+      "reset-failed a.service";
+    ]
+    (In_mem.ops sc)
+
+(* A stop that raises still happened on the wire, so it is still an op:
+   [Lifecycle.down] aborting on the slice stop is asserted through this. *)
+let test_ops_records_a_failing_stop () =
+  eio_run @@ fun ~sw ~env ->
+  let sc = In_mem.connect ~sw env in
+  In_mem.push_state sc ~unit:"a.service" Schema.Active;
+  In_mem.fail_next_stop sc ~unit:"a.service"
+    ~error_name:(Some Systemctl.Bus_errors.no_reply)
+    ~reply:(Systemctl.Bus_errors.no_reply ^ ": Remote peer disconnected");
+  (try In_mem.stop_unit sc ~unit:"a.service" with Schema.Pctl_error _ -> ());
+  Alcotest.(check (list string))
+    "the attempted stop is recorded" [ "stop a.service" ] (In_mem.ops sc)
 
 let test_push_state_notifies () =
   eio_run @@ fun ~sw ~env ->
@@ -262,7 +303,12 @@ let () =
           Alcotest.test_case "unit_state unknown" `Quick test_unit_state_unknown;
           Alcotest.test_case "fail_next_start" `Quick test_fail_next_start;
           Alcotest.test_case "restart transitions" `Quick test_restart_transitions;
-          Alcotest.test_case "daemon_reload no-op" `Quick test_daemon_reload_noop;
+          Alcotest.test_case "daemon_reload leaves states alone" `Quick
+            test_daemon_reload_noop;
+          Alcotest.test_case "ops records every mutator once" `Quick
+            test_ops_records_every_mutator_once;
+          Alcotest.test_case "ops records a failing stop" `Quick
+            test_ops_records_a_failing_stop;
           Alcotest.test_case "push_state notifies subscribers" `Quick
             test_push_state_notifies;
           Alcotest.test_case "subscribers_count" `Quick test_subscribers_count;

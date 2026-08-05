@@ -252,10 +252,22 @@ let systemctl_is_active unit_name =
   in
   String.trim out = "active"
 
-let wait_active ?(timeout_s = 5.0) unit_name =
+(* Poll until [unit_name] reaches [wanted] activeness, bounded.
+ *
+ * Both directions have to be polled, because plain up / reload / down do
+ * not wait for a systemd job: Manager.StartUnit and Manager.StopUnit each
+ * queue a job and return the job path (see the note in lib/gc/gc.ml on
+ * what a successful stop does and does not establish). Only `up --wait`
+ * blocks, via [Probe]. Measured under pctl-e0d:
+ * the slice's deactivation lands after `pctl down` returns, so a single
+ * `is-active` read right afterwards is a coin flip. It used to look
+ * deterministic only because down then paid a second Manager.Reload,
+ * which outlasted the cascade. Filed as
+ * pctl-down-returns-before-cascade-qi7. *)
+let wait_activeness ?(timeout_s = 5.0) ~wanted unit_name =
   let deadline = Unix.gettimeofday () +. timeout_s in
   let rec loop () =
-    if systemctl_is_active unit_name then true
+    if systemctl_is_active unit_name = wanted then true
     else if Unix.gettimeofday () > deadline then false
     else begin
       let _ = Unix.select [] [] [] 0.1 in
@@ -264,7 +276,30 @@ let wait_active ?(timeout_s = 5.0) unit_name =
   in
   loop ()
 
+let wait_active ?timeout_s unit_name =
+  wait_activeness ?timeout_s ~wanted:true unit_name
+
+let wait_inactive ?timeout_s unit_name =
+  wait_activeness ?timeout_s ~wanted:false unit_name
+
 let is_active = systemctl_is_active
+
+(* LoadState: "loaded" while systemd holds a fragment for the unit,
+ * "not-found" once the file is gone.
+ *
+ * NOT evidence that a daemon-reload happened. Measured under pctl-e0d
+ * against this session's systemd: a stopped unit whose file is deleted
+ * reads "not-found" with zero intervening reloads, because systemd GCs
+ * the stopped unit and `show` then re-loads it from disk. It also lies
+ * about slices, which systemd synthesises fragment-less — see
+ * test_down_missing_units.ml, which owns the evidence for that. *)
+let load_state unit_name =
+  let out, _ =
+    run_capture
+      (Printf.sprintf "systemctl --user show -p LoadState --value %s 2>/dev/null"
+         (Filename.quote unit_name))
+  in
+  String.trim out
 
 (* ActiveEnterTimestampMonotonic as a string; empty on error/no-such-unit. *)
 let active_enter_ts unit_name =
@@ -471,9 +506,9 @@ let assert_unit_active unit_name =
       (unit_diagnostic unit_name)
 
 let assert_unit_inactive unit_name =
-  assert_false
-    ~label:(Printf.sprintf "%s inactive" unit_name)
-    (is_active unit_name)
+  if not (wait_inactive unit_name) then
+    Alcotest.failf "%s did not leave active within 5s\n%s" unit_name
+      (unit_diagnostic unit_name)
 
 let assert_unit_exists unit_filename =
   assert_true

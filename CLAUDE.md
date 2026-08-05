@@ -15,7 +15,7 @@ OCaml single binary driven by `dune`. Nix-side library stays in `nix/lib/` as th
 - `nix/lib/` — `mkProject.nix`, `types.nix`, `sandbox-defaults.nix`, `default.nix`. Emits `spec.json` via `pkgs.writeText`; OCaml consumes it.
 - `migrations/` — SQL applied at startup.
 - `templates/init/` — scaffold for `pctl init`.
-- `scripts/` — dev-loop helpers that are not part of the build. `e2e-repeat.sh` is the only one; see Tests.
+- `scripts/` — dev-loop helpers that are not part of the build: `e2e-repeat.sh` (see Tests) and `measure-reloads.sh`, which runs up/reload/restart/down against the live session and reports each one's wall clock and `Manager.Reload` count from the user manager's own journal. Neither runs in a gate.
 - `docs/src/plans/20260419-ocaml-rewrite.md` — architecture + locked decisions.
 
 ## Tests

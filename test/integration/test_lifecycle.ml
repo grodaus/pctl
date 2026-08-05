@@ -35,6 +35,7 @@ let spec_of_services (svcs : Schema.service_spec list) : Schema.spec =
   { version = 2; slice = { slice_config = [] }; services }
 
 let slice_unit : Schema.Unit_filename.t = Schema.Unit_filename.slice ~id
+let slice_s = Schema.Unit_filename.to_string slice_unit
 
 let service_unit n : Schema.Unit_filename.t =
   Schema.Unit_filename.service ~id ~service:n
@@ -209,7 +210,6 @@ let test_down_propagates_stop_failure () =
   with_sandbox @@ fun ~sw:_ ~conn ~handle ~us ->
   let s = spec_of_services [ svc_simple "web" ] in
   let _ = L.up ~conn ~handle ~unit_store:us ~ctx ~spec:s () in
-  let slice_s = Schema.Unit_filename.to_string slice_unit in
   arm_failing_stop handle ~unit_:slice_s;
   let raised =
     try
@@ -247,7 +247,6 @@ let test_down_tolerates_no_such_unit () =
   with_sandbox @@ fun ~sw:_ ~conn ~handle ~us ->
   let s = spec_of_services [ svc_simple "web" ] in
   let _ = L.up ~conn ~handle ~unit_store:us ~ctx ~spec:s () in
-  let slice_s = Schema.Unit_filename.to_string slice_unit in
   arm_no_such_unit_stop handle ~unit_:slice_s;
   let r = L.down ~conn ~handle ~unit_store:us ~ctx () in
   Alcotest.(check int) "down cleared manifest" 0 r.units_on_disk;
@@ -339,14 +338,116 @@ let test_down_after_up () =
   (match row_after with
   | None -> Alcotest.fail "project row vanished after down"
   | Some r -> Alcotest.(check (option string)) "host cleared" None r.host);
-  let slice_s = Schema.Unit_filename.to_string slice_unit in
   Alcotest.(check bool)
     "slice not active" false
     (Systemctl.In_mem.unit_state handle ~unit:slice_s = Schema.Active)
 
+(* ------------------------------------------------------------------ *)
+(* Reload economy (pctl-e0d).
+ *
+ * Manager.Reload dominates the cost of up, reload and down — it is worth
+ * more than everything else those commands do put together — so the
+ * reload COUNT is part of the contract rather than an implementation
+ * detail, and these tests pin it. The ordering it has to keep is
+ * documented at lib/lifecycle/lifecycle.ml's [apply_plan].
+ *
+ * scripts/measure-reloads.sh prints the same counts, and the cost that
+ * motivates them, against real systemd via the manager's journal. *)
+
+let ops_testable = Alcotest.(list string)
+
+let reload_count = Systemctl.In_mem.reload_count
+
+(* The ops recorded since [before], which callers capture as
+   [List.length (In_mem.ops handle)] before the call under test. *)
+let ops_since handle before =
+  List.filteri (fun i _ -> i >= before) (Systemctl.In_mem.ops handle)
+
+let service_s n = Schema.Unit_filename.to_string (service_unit n)
+
+let test_up_reloads_once_before_the_jobs () =
+  with_sandbox @@ fun ~sw:_ ~conn ~handle ~us ->
+  let s = spec_of_services [ svc_simple "web"; svc_simple "db" ] in
+  let _ = L.up ~conn ~handle ~unit_store:us ~ctx ~spec:s () in
+  (* Services in unit-filename order — see [Plan.sort_rows]. *)
+  Alcotest.check ops_testable "one reload, then slice, then services"
+    [
+      "daemon-reload";
+      "start " ^ slice_s;
+      "start " ^ service_s "db";
+      "start " ^ service_s "web";
+    ]
+    (Systemctl.In_mem.ops handle)
+
+(* Pinned at one so the old pair is not quietly restored; the case for
+   zero is pctl-idempotent-up-no-reload-r3c, blocked on pctl-468. *)
+let test_idempotent_up_reloads_once_and_starts_nothing () =
+  with_sandbox @@ fun ~sw:_ ~conn ~handle ~us ->
+  let s = spec_of_services [ svc_simple "web" ] in
+  let _ = L.up ~conn ~handle ~unit_store:us ~ctx ~spec:s () in
+  let before = List.length (Systemctl.In_mem.ops handle) in
+  let r2 = L.up ~conn ~handle ~unit_store:us ~ctx ~spec:s () in
+  (* Precondition asserted, not assumed: with any actionable row a job
+     would be expected below, so this would pass for the wrong reason. *)
+  Alcotest.(check bool)
+    "second up has no actionable row" true
+    (List.for_all
+       (fun (row : Schema.plan_row) -> row.action = Schema.Unchanged)
+       r2.diff);
+  Alcotest.check ops_testable "one reload and no job" [ "daemon-reload" ]
+    (ops_since handle before)
+
+let test_reload_dropping_a_service_reloads_once () =
+  with_sandbox @@ fun ~sw:_ ~conn ~handle ~us ->
+  let api_s, only_web = reload_dropping_api handle conn us in
+  let before = List.length (Systemctl.In_mem.ops handle) in
+  let _ = L.up ~conn ~handle ~unit_store:us ~ctx ~spec:only_web () in
+  Alcotest.check ops_testable "one reload, then the dropped service's stop"
+    [ "daemon-reload"; "stop " ^ api_s ]
+    (ops_since handle before)
+
+let test_down_reloads_once_after_the_removals () =
+  with_sandbox @@ fun ~sw:_ ~conn ~handle ~us ->
+  let s = spec_of_services [ svc_simple "web" ] in
+  let _ = L.up ~conn ~handle ~unit_store:us ~ctx ~spec:s () in
+  let before = List.length (Systemctl.In_mem.ops handle) in
+  let _ = L.down ~conn ~handle ~unit_store:us ~ctx () in
+  (* No per-service stop — the slice stop's cgroup cascade is what takes
+     the services down; see [reload]'s down path. *)
+  Alcotest.check ops_testable "slice stop, then one reload"
+    [ "stop " ^ slice_s; "daemon-reload" ]
+    (ops_since handle before)
+
+(* A [down] that aborts on the slice stop must not have reloaded: the
+   files are still on disk, so there is nothing new for systemd to read,
+   and the reload is the most expensive thing on the path. *)
+let test_failed_down_reloads_not_at_all () =
+  with_sandbox @@ fun ~sw:_ ~conn ~handle ~us ->
+  let s = spec_of_services [ svc_simple "web" ] in
+  let _ = L.up ~conn ~handle ~unit_store:us ~ctx ~spec:s () in
+  let before = reload_count handle in
+  arm_failing_stop handle ~unit_:slice_s;
+  (try ignore (L.down ~conn ~handle ~unit_store:us ~ctx ())
+   with Schema.Pctl_error (Schema.Unit_op_failed { op = "StopUnit"; _ }) -> ());
+  Alcotest.(check int) "no reload on the aborted path" before
+    (reload_count handle)
+
 let () =
   Alcotest.run "lifecycle"
     [
+      ( "reload economy",
+        [
+          Alcotest.test_case "up: one reload before the jobs" `Quick
+            test_up_reloads_once_before_the_jobs;
+          Alcotest.test_case "idempotent up: one reload, no job" `Quick
+            test_idempotent_up_reloads_once_and_starts_nothing;
+          Alcotest.test_case "reload dropping a service: one reload" `Quick
+            test_reload_dropping_a_service_reloads_once;
+          Alcotest.test_case "down: one reload after the removals" `Quick
+            test_down_reloads_once_after_the_removals;
+          Alcotest.test_case "aborted down: no reload" `Quick
+            test_failed_down_reloads_not_at_all;
+        ] );
       ( "primitives",
         [
           Alcotest.test_case "up fresh" `Quick test_up_fresh;

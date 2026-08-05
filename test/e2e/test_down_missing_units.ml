@@ -35,15 +35,6 @@ let systemctl_user args : int * string =
   in
   (rc, out)
 
-let load_state unit_name =
-  let out, _ =
-    Harness.run_capture
-      (Printf.sprintf
-         "systemctl --user show -p LoadState --value %s 2>/dev/null"
-         (Filename.quote unit_name))
-  in
-  String.trim out
-
 let () =
   Harness.skip_or_run ~name:"test_down_missing_units" @@ fun () ->
   Harness.with_scratch ~services:[ Harness.service "web" ] @@ fun scratch ->
@@ -83,7 +74,7 @@ let () =
     (systemctl_user "daemon-reload");
   Harness.assert_unit_inactive slice;
   Harness.assert_eq_string ~label:"service fragment forgotten by systemd"
-    "not-found" (load_state web);
+    "not-found" (Harness.load_state web);
   Harness.check_rc_zero ~label:"down (units missing)" (Harness.down ~scratch);
   Harness.assert_unit_gone slice_file;
   Harness.assert_unit_gone web_file;

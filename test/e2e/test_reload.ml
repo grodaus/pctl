@@ -55,4 +55,15 @@ let () =
     | None -> Alcotest.fail "web unit file missing post-reload"
   in
   Harness.assert_contains ~label:"web disk has web-v2" web_disk "web-v2";
+  (* Drop db from the spec, so its row is [Removed] against real systemd:
+     the file is deleted before [apply_plan], and the stop that follows
+     has to take the service down even though its fragment is already
+     gone. Nothing else in the e2e suite reloads a service away. *)
+  let oc = open_out s.spec_path in
+  output_string oc (Harness.spec_json ~services:[ web_service ]);
+  close_out oc;
+  Harness.check_rc_zero ~label:"reload dropping db" (Harness.reload ~scratch:s);
+  Harness.assert_unit_gone (Harness.service_filename_for ~id ~service_name:"db");
+  Harness.assert_unit_inactive db;
+  Harness.assert_unit_active web;
   print_endline "test_reload OK"

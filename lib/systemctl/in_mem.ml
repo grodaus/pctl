@@ -16,6 +16,7 @@
  *                           force the next read of that kind to raise
  *   - [push_state]          directly inject a state (fires subscribers)
  *   - [inspect]             dump (unit, state) pairs
+ *   - [ops], [reload_count]
  *   - [subscribers_count]   leak check
  *)
 
@@ -51,6 +52,11 @@ type t = {
          queues a job, leaving the unit Inactive until the dep chain
          clears. Cleared automatically when [start_unit]'s transition
          drops the unit into Active/Failed. *)
+  mutable ops_rev : string list;
+      (* Recorded BEFORE the call can raise, so an armed failure still
+         shows the attempt. Reads are deliberately absent: [Probe] polls
+         [unit_state] in a loop, which would bury the jobs and reloads a
+         caller's ordering assertion is about. *)
 }
 
 let connect ~sw env =
@@ -64,7 +70,10 @@ let connect ~sw env =
     fail_next_unit_state = Hashtbl.create 4;
     fail_next_job_pending = Hashtbl.create 4;
     pending_jobs = Hashtbl.create 4;
+    ops_rev = [];
   }
+
+let record t op = t.ops_rev <- op :: t.ops_rev
 
 let subscribers_for t u =
   match Hashtbl.find_opt t.subscribers u with
@@ -105,7 +114,7 @@ let current_state t u =
   | Some s -> s
   | None -> Schema.Inactive
 
-let start_unit t ~unit:u =
+let do_start t ~unit:u =
   let cur = current_state t u in
   match cur with
   | Active | Activating -> () (* already running / about to be *)
@@ -122,7 +131,7 @@ let start_unit t ~unit:u =
       in
       set_state t u terminal
 
-let stop_unit t ~unit:u =
+let do_stop t ~unit:u =
   (match Hashtbl.find_opt t.fail_next_stop u with
    | None -> ()
    | Some (error_name, reply) ->
@@ -140,15 +149,26 @@ let stop_unit t ~unit:u =
       sleep t;
       set_state t u Inactive
 
+let start_unit t ~unit:u =
+  record t ("start " ^ u);
+  do_start t ~unit:u
+
+let stop_unit t ~unit:u =
+  record t ("stop " ^ u);
+  do_stop t ~unit:u
+
 let restart_unit t ~unit:u =
   (* Stop-then-start sequence, as two fiber-awaited operations: because
-   * both [stop_unit] and [start_unit] sleep between state transitions,
+   * both [do_stop] and [do_start] sleep between state transitions,
    * subscribers see the full Deactivating → Inactive → Activating →
-   * Active sequence. *)
-  stop_unit t ~unit:u;
-  start_unit t ~unit:u
+   * Active sequence. Recorded as one "restart", not as the stop and the
+   * start it is built from — Manager.RestartUnit is one call on the
+   * wire and callers assert against the wire. *)
+  record t ("restart " ^ u);
+  do_stop t ~unit:u;
+  do_start t ~unit:u
 
-let daemon_reload _t = ()
+let daemon_reload t = record t "daemon-reload"
 
 (* The In_mem handle holds no external resources; [close] is a no-op.
  * Matches the signature contract used by Pipeline.with_handle. *)
@@ -159,6 +179,7 @@ let close _t = ()
  * real-systemd perspective too. Best-effort no-op matches the Dbus
  * implementation's unknown-unit behaviour. *)
 let reset_failed_unit t ~unit:u =
+  record t ("reset-failed " ^ u);
   match current_state t u with
   | Schema.Failed -> set_state t u Schema.Inactive
   | _ -> ()
@@ -231,6 +252,15 @@ let clear_pending_job t ~unit:u = Hashtbl.remove t.pending_jobs u
 let inspect t =
   Hashtbl.fold (fun u s acc -> (u, s) :: acc) t.states []
   |> List.sort (fun (a, _) (b, _) -> String.compare a b)
+
+(* Exists so a caller's *sequence* is assertable and not just its end
+ * state: the daemon-reload/start ordering [Lifecycle.apply_plan] depends
+ * on leaves no trace in [inspect], and neither does a redundant
+ * reload. *)
+let ops t = List.rev t.ops_rev
+
+let reload_count t =
+  List.length (List.filter (( = ) "daemon-reload") t.ops_rev)
 
 let subscribers_count t ~unit:u =
   match Hashtbl.find_opt t.subscribers u with

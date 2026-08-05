@@ -555,11 +555,10 @@ let restart_unit t ~unit:u = call_unit_op t ~op:"RestartUnit" ~unit:u
 (* Manager.Reload is idempotent, so a call whose peer vanished can
  * simply be re-issued. That is worth doing here because the peer
  * vanishing is routine on this platform: every NixOS / home-manager
- * activation reexecs the user manager, and pctl reloads twice per [up]
- * (the pair bracketing [Lifecycle.apply_plan]) plus two more for each
- * project the gc sweep removes. See [Bus_retry] for the failure
- * signature and for why the retry is bounded by elapsed time rather
- * than by attempt count. *)
+ * activation reexecs the user manager, and pctl reloads at most once per
+ * mutating command, plus one more when a gc sweep or purge removed
+ * anything. See [Bus_retry] for the failure signature and for why the
+ * retry is bounded by elapsed time rather than by attempt count. *)
 let daemon_reload t =
   let now () = Eio.Time.Mono.now t.mono in
   let started = now () in

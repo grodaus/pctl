@@ -5,8 +5,7 @@
  *   1. hashes the rendered unit bytes,
  *   2. writes/removes main units and their drop-ins via [Unit_store],
  *   3. diffs the new manifest against the persisted one,
- *   4. applies the diff via [Systemctl] with the fixed daemon_reload
- *      bracketing,
+ *   4. applies the diff via [Systemctl], reloading systemd at most once,
  *   5. replaces the stored manifest.
  *
  * [up] is [reload ~spec:(Some s)]; [down] is [reload ~spec:None] plus
@@ -92,8 +91,10 @@ module Make (M : Systemctl.S) (US : Unit_store.S) = struct
   module WA = Write_all (US)
 
   (* Apply logic. Ordering is load-bearing:
-       - [daemon_reload] frames every pass so systemd sees the new
-         on-disk shape before any start/stop fires.
+       - [daemon_reload] runs once, before any start/stop fires, so
+         systemd sees the new on-disk shape: [reload] has already
+         written every unit and deleted the [Removed] ones by then.
+         One is enough because nothing here writes to disk after it.
        - Slice rows run first so an [Added] slice is up before its
          services try to start under it; a [Removed] slice's cascade
          kill terminates every service in its cgroup.
@@ -129,8 +130,7 @@ module Make (M : Systemctl.S) (US : Unit_store.S) = struct
     M.daemon_reload handle;
     let slices, services = List.partition is_slice_unit rows in
     List.iter (apply_row handle) slices;
-    List.iter (apply_row handle) services;
-    M.daemon_reload handle
+    List.iter (apply_row handle) services
 
   let reload ~(conn : State.Db.t) ~(handle : M.t) ~(unit_store : US.t)
       ~(ctx : ctx) ~(spec : Schema.spec option) () : report =
@@ -149,10 +149,10 @@ module Make (M : Systemctl.S) (US : Unit_store.S) = struct
     in
     (match spec with
      | Some _ ->
-         (* up / reload path — preserves current pipeline.reload ordering:
-            remove stale files first so systemd's next daemon_reload sees
-            them gone, then apply (daemon_reload; start/restart Added/
-            Changed; stop Removed (tolerated); daemon_reload). *)
+         (* up / reload path: remove stale files first so [apply_plan]'s
+            single daemon_reload sees them gone at the same time as it
+            sees the units just written, then apply (daemon_reload;
+            start/restart Added/Changed; stop Removed (tolerated)). *)
          List.iter
            (fun (r : Schema.plan_row) ->
              if r.action = Schema.Removed then
@@ -160,10 +160,9 @@ module Make (M : Systemctl.S) (US : Unit_store.S) = struct
            diff;
          apply_plan ~handle ~rows:diff
      | None ->
-         (* down path — preserves current pipeline.down ordering:
-            stop the slice first so the cgroup cascade kills every
-            service in it BEFORE we unload the slice from systemd's
-            view, daemon_reload, remove files, daemon_reload. Skipping
+         (* down path: stop the slice first so the cgroup cascade kills
+            every service in it BEFORE we unload the slice from systemd's
+            view, then remove files, then daemon_reload. Skipping
             [apply_plan] here is deliberate; its slice-stop would
             happen after the daemon_reload, losing the cascade. *)
          let slice_unit =
@@ -174,16 +173,18 @@ module Make (M : Systemctl.S) (US : Unit_store.S) = struct
             project whose slice never loaded has nothing to cascade.
             Every other stop failure means the cascade did NOT fire and
             the services are still running, so it must propagate before
-            the three statements below unload the slice and delete every
-            unit file: that would leave those processes alive in a cgroup
+            the removals and the reload below delete every unit file and
+            unload the slice: that would leave those processes alive in a cgroup
             with no units left to manage them, invisible to [pctl status]
             and unreachable by [pctl down]. *)
          (try M.stop_unit handle ~unit:slice_unit
           with Schema.Pctl_error e when Systemctl.Bus_errors.is_no_such_unit e -> ());
-         M.daemon_reload handle;
          List.iter
            (fun (uf, _hash) -> US.remove unit_store ~unit_:uf)
            manifest_before;
+         (* The removals are the only thing this path changes on disk, so
+            one reload after them is what systemd needs to forget the
+            units. *)
          M.daemon_reload handle);
     State.Projects.replace_manifest conn ~project_id:id_s ~rows:manifest_after;
     { diff; units_on_disk = List.length manifest_after }

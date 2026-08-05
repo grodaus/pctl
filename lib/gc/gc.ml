@@ -114,7 +114,6 @@ module Make (M : Systemctl.S) = struct
      * the ordering the down path already relies on; narrowing the catch
      * only removes the case where the job was never accepted at all. A
      * stale systemd view is recovered by the next daemon-reload. *)
-    ignore_best_effort (fun () -> M.daemon_reload handle);
     (* Remove the actual unit files on disk. Unit_store.Fs.remove
      * tolerates non-existence already. *)
     ignore_best_effort (fun () ->
@@ -125,7 +124,10 @@ module Make (M : Systemctl.S) = struct
         (* Defensive: some earlier paths did not persist the slice in
          * the manifest. Removing it again is a no-op. *)
         Unit_store.Fs.remove us ~unit_:(Schema.Unit_filename.slice ~id));
-    ignore_best_effort (fun () -> M.daemon_reload handle);
+    (* No daemon_reload here: it is the caller's, fired once after the
+     * whole row loop (pctl-e0d). Nothing between the deletions above and
+     * the end of this function talks to systemd, so a per-row reload
+     * bought ordering nothing needed. *)
     (* Wipe the manifest + project row. *)
     ignore_best_effort (fun () ->
         State.Projects.replace_manifest conn ~project_id:id_s ~rows:[]);
@@ -143,17 +145,26 @@ module Make (M : Systemctl.S) = struct
       try
         let boot_id = Clock.read_boot_id_exn () in
         let rows = State.Projects.all conn in
+        let removed = ref false in
         List.iter
           (fun row ->
             match class_of_row ~boot_id row with
             | Schema.Unknown -> (
-                try remove_project ~conn ~handle row
+                try
+                  remove_project ~conn ~handle row;
+                  removed := true
                 with e ->
                   Printf.eprintf
                     "pctl gc: warn — failed to sweep %s: %s\n" row.id
                     (describe_exn e))
             | Schema.Orphan | Schema.Live -> ())
-          rows
+          rows;
+        (* One reload for the whole sweep, and none when it removed
+         * nothing — the common case, since a sweep only acts on a project
+         * whose path has vanished. This is the reload the caller then
+         * pays again in [Lifecycle.apply_plan]; see pctl-e0d for why that
+         * remaining pair is not collapsed. *)
+        if !removed then ignore_best_effort (fun () -> M.daemon_reload handle)
       with e ->
         Printf.eprintf "pctl gc: warn — sweep aborted: %s\n" (describe_exn e)
 
@@ -163,20 +174,27 @@ module Make (M : Systemctl.S) = struct
   let purge ~(conn : State.Db.t) ~(handle : M.t) : int =
     let boot_id = Clock.read_boot_id_exn () in
     let rows = State.Projects.all conn in
-    List.fold_left
-      (fun removed row ->
-        match class_of_row ~boot_id row with
-        | Schema.Live -> removed
-        | Schema.Orphan | Schema.Unknown -> (
-            try
-              remove_project ~conn ~handle row;
-              Printf.printf "removed %s\n" row.id;
-              removed + 1
-            with e ->
-              Printf.eprintf "pctl gc: warn — failed to remove %s: %s\n"
-                row.id (describe_exn e);
-              removed))
-      0 rows
+    let removed =
+      List.fold_left
+        (fun removed row ->
+          match class_of_row ~boot_id row with
+          | Schema.Live -> removed
+          | Schema.Orphan | Schema.Unknown -> (
+              try
+                remove_project ~conn ~handle row;
+                Printf.printf "removed %s\n" row.id;
+                removed + 1
+              with e ->
+                Printf.eprintf "pctl gc: warn — failed to remove %s: %s\n"
+                  row.id (describe_exn e);
+                removed))
+        0 rows
+    in
+    (* As in [opportunistic_sweep]: one reload for the run, none when
+     * nothing was removed. No lifecycle work follows `pctl gc --yes`, so
+     * this is the only reload that will tell systemd the files are gone. *)
+    if removed > 0 then ignore_best_effort (fun () -> M.daemon_reload handle);
+    removed
 end
 
 (* Report-only (no --yes) classification output — one row per project.
