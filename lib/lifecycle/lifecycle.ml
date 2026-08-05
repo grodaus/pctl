@@ -98,9 +98,12 @@ module Make (M : Systemctl.S) (US : Unit_store.S) = struct
        - Slice rows run first so an [Added] slice is up before its
          services try to start under it; a [Removed] slice's cascade
          kill terminates every service in its cgroup.
-       - [Changed] on a slice row is a no-op: bouncing the slice
-         would restart every service under it, which is never what
-         [pctl reload] means.
+       - A slice row never restarts: bouncing the slice cascade-kills
+         every service in its cgroup, and those services are diffed
+         independently, so they would be [Unchanged] and never brought
+         back. Hence [Changed] on a slice is a no-op and [Added] on a
+         slice is a plain start, where a service takes a restart for
+         both.
        - [Removed] tolerates one stop reply and no more — see the arm. *)
   let is_slice_unit (r : Schema.plan_row) : bool =
     let s = Schema.Unit_filename.to_string r.unit_ in
@@ -111,7 +114,17 @@ module Make (M : Systemctl.S) (US : Unit_store.S) = struct
     let unit_s = Schema.Unit_filename.to_string r.unit_ in
     match r.action with
     | Schema.Unchanged -> ()
-    | Schema.Added -> M.start_unit handle ~unit:unit_s
+    | Schema.Added ->
+        (* Restart, not start, because [Added] does not imply the unit is
+           new: it means the diff found no installed hash, and under
+           pctl-468's D1 fix a unit whose file was deleted under a
+           running process reaches that too. StartUnit on an
+           already-active unit is a no-op, so it would leave the process
+           serving the OLD config while the diff printed [+]. RestartUnit
+           on an inactive or unloaded unit simply starts it, so a
+           genuinely new unit still costs the one call. *)
+        if is_slice_unit r then M.start_unit handle ~unit:unit_s
+        else M.restart_unit handle ~unit:unit_s
     | Schema.Changed ->
         if is_slice_unit r then ()
         else M.restart_unit handle ~unit:unit_s

@@ -70,8 +70,8 @@ _Diffed by [`lib/state/`](./lib/state) (`Projects.diff_manifest`); formatted for
 | Term                     | Definition                                                          | Aliases to avoid |
 | ------------------------ | ------------------------------------------------------------------- | ---------------- |
 | **Plan**                 | The ordered table of `{unit, action, old_hash, new_hash}` rows a diff produces | Diff, changeset  |
-| **Action: added (+)**    | Unit present in new **manifest**, absent in old — `start`           | New              |
-| **Action: changed (~)**  | Unit in both manifests, hashes differ — `restart`                   | Updated          |
+| **Action: added (+)**    | Unit present in new **manifest**, absent in old — `start` for the **slice**, `restart` for a service | New              |
+| **Action: changed (~)**  | Unit in both manifests, hashes differ — `restart` for a service, no-op for the **slice** | Updated          |
 | **Action: unchanged (=)**| Unit in both manifests, hashes equal — no-op                        | Same             |
 | **Action: removed (-)**  | Unit absent in new, present in old — `stop` and delete              | Gone, deleted    |
 

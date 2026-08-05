@@ -40,6 +40,15 @@ let slice_s = Schema.Unit_filename.to_string slice_unit
 let service_unit n : Schema.Unit_filename.t =
   Schema.Unit_filename.service ~id ~service:n
 
+let service_s n = Schema.Unit_filename.to_string (service_unit n)
+
+let ops_testable = Alcotest.(list string)
+
+(* The ops recorded since [before], which callers capture as
+   [List.length (In_mem.ops handle)] before the call under test. *)
+let ops_since handle before =
+  List.filteri (fun i _ -> i >= before) (Systemctl.In_mem.ops handle)
+
 let action_testable =
   Alcotest.testable
     (fun ppf a -> Format.fprintf ppf "%s" (Schema.action_to_string a))
@@ -303,6 +312,78 @@ let test_reload_tolerates_removed_no_such_unit_stop () =
        (Schema.Unit_filename.equal (service_unit "api"))
        (Unit_store.In_mem.list us))
 
+(* Reaches the state a hand-`rm` of a unit file inside user.control
+   reaches under pctl-468's D1 fix, where the diff's left side is read
+   from disk: no file, so no installed hash, so [Added] — over a unit
+   that is still loaded and still running the OLD config. Pre-D1 the left
+   side is this table, so here the row has to come out of it instead. *)
+let forget_manifest_row conn ~unit_ =
+  let project_id = Schema.Project_id.to_string id in
+  State.Projects.replace_manifest conn ~project_id
+    ~rows:
+      (State.Projects.load_manifest conn ~project_id
+      |> List.filter (fun (uf, _hash) ->
+             not (Schema.Unit_filename.equal uf unit_)))
+
+let test_added_service_still_running_is_restarted () =
+  with_sandbox @@ fun ~sw:_ ~conn ~handle ~us ->
+  let s = spec_of_services [ svc_simple "web" ] in
+  let _ = L.up ~conn ~handle ~unit_store:us ~ctx ~spec:s () in
+  forget_manifest_row conn ~unit_:(service_unit "web");
+  let s2 =
+    spec_of_services [ svc_simple ~command:[ "/bin/true"; "--changed" ] "web" ]
+  in
+  let before = List.length (Systemctl.In_mem.ops handle) in
+  (* Read before the call: a restart leaves the unit Active either way,
+     so after it this cannot fail and the "already running" half of the
+     precondition would go unverified. *)
+  let state_before =
+    Systemctl.In_mem.unit_state handle ~unit:(service_s "web")
+  in
+  Alcotest.(check bool)
+    "web active going in" true
+    (state_before = Schema.Active);
+  let r = L.up ~conn ~handle ~unit_store:us ~ctx ~spec:s2 () in
+  Alcotest.(check bool)
+    "web is Added" true
+    (List.exists
+       (fun (row : Schema.plan_row) ->
+         Schema.Unit_filename.equal row.unit_ (service_unit "web")
+         && row.action = Schema.Added)
+       r.diff);
+  Alcotest.check ops_testable "one reload, then a restart of the live service"
+    [ "daemon-reload"; "restart " ^ service_s "web" ]
+    (ops_since handle before)
+
+(* The slice is the carve-out for the reason [apply_row] documents, and
+   with only the slice forgotten its services are Unchanged, so nothing
+   would bring back what a restarted slice killed. *)
+let test_added_slice_is_started_not_restarted () =
+  with_sandbox @@ fun ~sw:_ ~conn ~handle ~us ->
+  let s = spec_of_services [ svc_simple "web" ] in
+  let _ = L.up ~conn ~handle ~unit_store:us ~ctx ~spec:s () in
+  forget_manifest_row conn ~unit_:slice_unit;
+  let before = List.length (Systemctl.In_mem.ops handle) in
+  let state_before = Systemctl.In_mem.unit_state handle ~unit:slice_s in
+  Alcotest.(check bool)
+    "slice active going in" true
+    (state_before = Schema.Active);
+  let r = L.up ~conn ~handle ~unit_store:us ~ctx ~spec:s () in
+  Alcotest.(check bool)
+    "slice is Added, web is Unchanged" true
+    (List.for_all
+       (fun (row : Schema.plan_row) ->
+         if Schema.Unit_filename.equal row.unit_ slice_unit then
+           row.action = Schema.Added
+         else row.action = Schema.Unchanged)
+       r.diff);
+  (* The wire calls are the whole assertion: In_mem models no cgroup, so
+     the kill a restarted slice performs leaves no trace in its unit
+     states, and checking [web] is still Active would pass either way. *)
+  Alcotest.check ops_testable "one reload, then a plain start of the slice"
+    [ "daemon-reload"; "start " ^ slice_s ]
+    (ops_since handle before)
+
 let test_up_fail_next_write () =
   with_sandbox @@ fun ~sw:_ ~conn ~handle ~us ->
   Unit_store.In_mem.fail_next_write us ~reason:"injected disk-full";
@@ -354,28 +435,22 @@ let test_down_after_up () =
  * scripts/measure-reloads.sh prints the same counts, and the cost that
  * motivates them, against real systemd via the manager's journal. *)
 
-let ops_testable = Alcotest.(list string)
-
 let reload_count = Systemctl.In_mem.reload_count
-
-(* The ops recorded since [before], which callers capture as
-   [List.length (In_mem.ops handle)] before the call under test. *)
-let ops_since handle before =
-  List.filteri (fun i _ -> i >= before) (Systemctl.In_mem.ops handle)
-
-let service_s n = Schema.Unit_filename.to_string (service_unit n)
 
 let test_up_reloads_once_before_the_jobs () =
   with_sandbox @@ fun ~sw:_ ~conn ~handle ~us ->
   let s = spec_of_services [ svc_simple "web"; svc_simple "db" ] in
   let _ = L.up ~conn ~handle ~unit_store:us ~ctx ~spec:s () in
-  (* Services in unit-filename order — see [Plan.sort_rows]. *)
+  (* Services in unit-filename order — see [Plan.sort_rows]. They are
+     restarted rather than started even here, where every unit is
+     genuinely new; the [Added] arm of [apply_row] says why that costs
+     nothing. *)
   Alcotest.check ops_testable "one reload, then slice, then services"
     [
       "daemon-reload";
       "start " ^ slice_s;
-      "start " ^ service_s "db";
-      "start " ^ service_s "web";
+      "restart " ^ service_s "db";
+      "restart " ^ service_s "web";
     ]
     (Systemctl.In_mem.ops handle)
 
@@ -465,6 +540,10 @@ let () =
             `Quick test_reload_propagates_removed_stop_failure;
           Alcotest.test_case "reload tolerates a Removed row's no-such-unit stop"
             `Quick test_reload_tolerates_removed_no_such_unit_stop;
+          Alcotest.test_case "Added service that is still running is restarted"
+            `Quick test_added_service_still_running_is_restarted;
+          Alcotest.test_case "Added slice is started, never restarted" `Quick
+            test_added_slice_is_started_not_restarted;
           Alcotest.test_case "up fail_next_write → Install_failed" `Quick
             test_up_fail_next_write;
         ] );
