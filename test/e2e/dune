@@ -29,7 +29,7 @@
         test_logs test_status test_list test_gc
         test_gc_explicit test_pctl_no_gc test_dbus_subscribe
         test_depends_on_wait test_unit_state_survives_reexec
-        test_reload_survives_reexec)
+        test_reload_survives_reexec test_harness_reads)
  (modules test_up test_up_idempotent test_reload test_down test_worktree
           test_workspace test_wait_active test_wait_probe test_wait_timeout
           test_down_missing_units
@@ -37,7 +37,7 @@
           test_logs test_status test_list test_gc
           test_gc_explicit test_pctl_no_gc test_dbus_subscribe
           test_depends_on_wait test_unit_state_survives_reexec
-          test_reload_survives_reexec)
+          test_reload_survives_reexec test_harness_reads)
  (libraries e2e_harness schema identity unit_store cli state systemctl yojson
             str eio eio_main eio.unix alcotest unix mtime mtime.clock.os))
 
@@ -51,7 +51,8 @@
 
 (rule
  (alias e2e)
- (deps test_dbus_smoke.exe test_dbus_subscribe.exe test_up.exe
+ (deps test_dbus_smoke.exe test_harness_reads.exe test_dbus_subscribe.exe
+       test_up.exe
        test_up_idempotent.exe
        test_reload.exe test_down.exe test_down_missing_units.exe
        test_worktree.exe test_workspace.exe
@@ -65,6 +66,7 @@
  (action
   (progn
    (run ./test_dbus_smoke.exe)
+   (run ./test_harness_reads.exe)
    (run ./test_dbus_subscribe.exe)
    (run ./test_up.exe)
    (run ./test_up_idempotent.exe)

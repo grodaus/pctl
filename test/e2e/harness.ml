@@ -849,13 +849,62 @@ let teardown (o : owned) =
                        with _ -> ());
                       Systemctl.Dbus.close handle))))
 
-let systemctl_is_active unit_name =
-  let out, _ =
-    run_capture
-      (Printf.sprintf "systemctl --user is-active %s 2>/dev/null"
-         (Filename.quote unit_name))
+(* argv, not a shell string: [systemctl_read]'s failure message quotes
+ * it, and stderr has to come back separately from the answer. *)
+let run_systemctl (args : string list) : string * string * int =
+  let argv = Array.of_list ("systemctl" :: "--user" :: args) in
+  let out, inp, err =
+    Unix.open_process_args_full "systemctl" argv (Unix.environment ())
   in
-  String.trim out = "active"
+  close_out inp;
+  let stdout = In_channel.input_all out in
+  let stderr = In_channel.input_all err in
+  let rc =
+    match Unix.close_process_full (out, inp, err) with
+    | Unix.WEXITED n -> n
+    | Unix.WSIGNALED _ | Unix.WSTOPPED _ -> 128
+  in
+  (String.trim stdout, stderr, rc)
+
+(* A read that did not reach a manager must not pass for an answer. With
+ * stderr dropped and the rc ignored, an unreachable bus reads as
+ * "inactive" or "", and every wait_inactive or before/after comparison
+ * built on it then passes for the wrong reason. [accept] says which
+ * (stdout, rc) pairs are answers; anything else fails the test. *)
+let systemctl_read ~(accept : string -> int -> bool) (args : string list) :
+    string =
+  let out, err, rc = run_systemctl args in
+  if accept out rc then out
+  else
+    Alcotest.failf
+      "systemctl --user %s did not answer (rc=%d, XDG_RUNTIME_DIR=%s)\n\
+       ---- stdout ----\n\
+       %s\n\
+       ---- stderr ----\n\
+       %s"
+      (String.concat " " args) rc
+      (Option.value (Sys.getenv_opt "XDG_RUNTIME_DIR") ~default:"(unset)")
+      out err
+
+(* systemctl(1): is-active exits 0 when active and non-zero otherwise, so
+ * the rc cannot tell a state from a failure to connect; the word can. *)
+let active_states =
+  [
+    "active";
+    "reloading";
+    "refreshing";
+    "inactive";
+    "failed";
+    "activating";
+    "deactivating";
+    "maintenance";
+  ]
+
+let systemctl_is_active unit_name =
+  systemctl_read
+    ~accept:(fun out _ -> List.mem out active_states)
+    [ "is-active"; unit_name ]
+  = "active"
 
 (* Poll until [unit_name] reaches [wanted] activeness, bounded.
  *
@@ -890,24 +939,15 @@ let is_active = systemctl_is_active
  * the stopped unit and `show` then re-loads it from disk. It also lies
  * about slices, which systemd synthesises fragment-less — see
  * test_down_missing_units.ml, which owns the evidence for that. *)
-let load_state unit_name =
-  let out, _ =
-    run_capture
-      (Printf.sprintf "systemctl --user show -p LoadState --value %s 2>/dev/null"
-         (Filename.quote unit_name))
-  in
-  String.trim out
+let show_property ~property unit_name =
+  systemctl_read
+    ~accept:(fun out rc -> rc = 0 && out <> "")
+    [ "show"; "-p"; property; "--value"; unit_name ]
 
-(* ActiveEnterTimestampMonotonic as a string; empty on error/no-such-unit. *)
-let active_enter_ts unit_name =
-  let out, _ =
-    run_capture
-      (Printf.sprintf
-         "systemctl --user show %s -p ActiveEnterTimestampMonotonic --value \
-          2>/dev/null"
-         (Filename.quote unit_name))
-  in
-  String.trim out
+let load_state = show_property ~property:"LoadState"
+
+(* "0" for a unit that has never been active. *)
+let active_enter_ts = show_property ~property:"ActiveEnterTimestampMonotonic"
 
 (* Redirect a stdlib fd (stdout or stderr) into a temp file while [f]
  * runs; return [f]'s result plus the captured bytes. Used by all the
