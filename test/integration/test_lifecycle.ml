@@ -292,10 +292,10 @@ let test_reload_propagates_removed_stop_failure () =
         true
   in
   Alcotest.(check bool) "reload raised Unit_op_failed" true raised;
-  (* The manifest is not replaced, so the next reload still sees the
-     dropped service as [Removed] and retries the stop. *)
+  (* Ownership is persisted before [apply_plan], so a raising job cannot
+     leave the manifest naming files that are already gone. *)
   Alcotest.(check int)
-    "manifest still lists both services" 3
+    "manifest names what is on disk: slice + web" 2
     (List.length
        (State.Projects.load_manifest conn
           ~project_id:(Schema.Project_id.to_string id)))
@@ -312,24 +312,14 @@ let test_reload_tolerates_removed_no_such_unit_stop () =
        (Schema.Unit_filename.equal (service_unit "api"))
        (Unit_store.In_mem.list us))
 
-(* Reaches the state a hand-`rm` of a unit file inside user.control
-   reaches under pctl-468's D1 fix, where the diff's left side is read
-   from disk: no file, so no installed hash, so [Added] — over a unit
-   that is still loaded and still running the OLD config. Pre-D1 the left
-   side is this table, so here the row has to come out of it instead. *)
-let forget_manifest_row conn ~unit_ =
-  let project_id = Schema.Project_id.to_string id in
-  State.Projects.replace_manifest conn ~project_id
-    ~rows:
-      (State.Projects.load_manifest conn ~project_id
-      |> List.filter (fun (uf, _hash) ->
-             not (Schema.Unit_filename.equal uf unit_)))
-
+(* A hand-`rm` of a unit file inside user.control: no file, so no
+   installed hash, so [Added] — over a unit that is still loaded and
+   still running the OLD config. *)
 let test_added_service_still_running_is_restarted () =
   with_sandbox @@ fun ~sw:_ ~conn ~handle ~us ->
   let s = spec_of_services [ svc_simple "web" ] in
   let _ = L.up ~conn ~handle ~unit_store:us ~ctx ~spec:s () in
-  forget_manifest_row conn ~unit_:(service_unit "web");
+  Unit_store.In_mem.remove us ~unit_:(service_unit "web");
   let s2 =
     spec_of_services [ svc_simple ~command:[ "/bin/true"; "--changed" ] "web" ]
   in
@@ -362,7 +352,7 @@ let test_added_slice_is_started_not_restarted () =
   with_sandbox @@ fun ~sw:_ ~conn ~handle ~us ->
   let s = spec_of_services [ svc_simple "web" ] in
   let _ = L.up ~conn ~handle ~unit_store:us ~ctx ~spec:s () in
-  forget_manifest_row conn ~unit_:slice_unit;
+  Unit_store.In_mem.remove us ~unit_:slice_unit;
   let before = List.length (Systemctl.In_mem.ops handle) in
   let state_before = Systemctl.In_mem.unit_state handle ~unit:slice_s in
   Alcotest.(check bool)
@@ -399,10 +389,75 @@ let test_up_fail_next_write () =
     State.Projects.load_manifest conn
       ~project_id:(Schema.Project_id.to_string id)
   in
-  Alcotest.(check int) "no partial manifest persisted" 0 (List.length stored);
+  (* Superset invariant: ownership is claimed before the first write, so
+     whatever landed before the failure is still deletable by down/gc. *)
+  Alcotest.(check (list string))
+    "manifest already names every rendered unit"
+    [ service_s "web"; slice_s ]
+    (List.map Schema.Unit_filename.to_string stored);
   Alcotest.(check int)
     "unit_store still empty" 0
     (List.length (Unit_store.In_mem.list us))
+
+(* pctl-468: the registry outlives a reboot, user.control does not. Every
+   unit must come back as Added and be started. *)
+let test_up_after_reboot_starts_everything () =
+  with_sandbox @@ fun ~sw:_ ~conn ~handle ~us ->
+  let s = spec_of_services [ svc_simple "web"; svc_simple "db" ] in
+  let _ = L.up ~conn ~handle ~unit_store:us ~ctx ~spec:s () in
+  State.Session.reset_with_boot_id conn ~boot_id:"boot-2";
+  let us = Unit_store.In_mem.create () in
+  let before = List.length (Systemctl.In_mem.ops handle) in
+  let r = L.up ~conn ~handle ~unit_store:us ~ctx ~spec:s () in
+  Alcotest.(check (list string)) "every row Added"
+    [ "added"; "added"; "added" ]
+    (List.map (fun (row : Schema.plan_row) -> Schema.action_to_string row.action) r.diff);
+  Alcotest.check ops_testable "one reload, then every unit started"
+    [
+      "daemon-reload";
+      "start " ^ slice_s;
+      "restart " ^ service_s "db";
+      "restart " ^ service_s "web";
+    ]
+    (ops_since handle before);
+  Alcotest.(check int) "files back on disk" 3
+    (List.length (Unit_store.In_mem.list us))
+
+(* Owned, dropped from the spec, file already gone: still Removed and
+   stopped, since a deleted file kills nothing. *)
+let test_reload_stops_dropped_unit_whose_file_is_gone () =
+  with_sandbox @@ fun ~sw:_ ~conn ~handle ~us ->
+  let api_s, only_web = reload_dropping_api handle conn us in
+  Unit_store.In_mem.remove us ~unit_:(service_unit "api");
+  let before = List.length (Systemctl.In_mem.ops handle) in
+  let r = L.up ~conn ~handle ~unit_store:us ~ctx ~spec:only_web () in
+  Alcotest.(check bool) "api is Removed" true
+    (List.exists
+       (fun (row : Schema.plan_row) ->
+         Schema.Unit_filename.equal row.unit_ (service_unit "api")
+         && row.action = Schema.Removed)
+       r.diff);
+  Alcotest.check ops_testable "one reload, then the stop"
+    [ "daemon-reload"; "stop " ^ api_s ]
+    (ops_since handle before)
+
+(* A hand-deleted service comes back as Added; the rest stay Unchanged. *)
+let test_up_after_hand_delete_restores_that_unit () =
+  with_sandbox @@ fun ~sw:_ ~conn ~handle ~us ->
+  let s = spec_of_services [ svc_simple "web"; svc_simple "db" ] in
+  let _ = L.up ~conn ~handle ~unit_store:us ~ctx ~spec:s () in
+  Unit_store.In_mem.remove us ~unit_:(service_unit "db");
+  let r = L.up ~conn ~handle ~unit_store:us ~ctx ~spec:s () in
+  Alcotest.(check (list (pair string string))) "only db Added"
+    [
+      (service_s "db", "added");
+      (service_s "web", "unchanged");
+      (slice_s, "unchanged");
+    ]
+    (List.map
+       (fun (row : Schema.plan_row) ->
+         (Schema.Unit_filename.to_string row.unit_, Schema.action_to_string row.action))
+       r.diff)
 
 let test_down_after_up () =
   with_sandbox @@ fun ~sw:_ ~conn ~handle ~us ->
@@ -546,5 +601,11 @@ let () =
             test_added_slice_is_started_not_restarted;
           Alcotest.test_case "up fail_next_write → Install_failed" `Quick
             test_up_fail_next_write;
+          Alcotest.test_case "up after reboot starts everything" `Quick
+            test_up_after_reboot_starts_everything;
+          Alcotest.test_case "up after a hand-delete restores that unit" `Quick
+            test_up_after_hand_delete_restores_that_unit;
+          Alcotest.test_case "reload stops a dropped unit whose file is gone"
+            `Quick test_reload_stops_dropped_unit_whose_file_is_gone;
         ] );
     ]

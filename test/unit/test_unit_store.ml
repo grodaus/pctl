@@ -108,7 +108,7 @@ let test_remove_is_idempotent () =
   Alcotest.(check uf_list) "In_mem double-remove ⇒ []" [] mem
 
 (* Fs-specific: dropin file lands under the *.d/ directory and [remove]
- * cleans it up. In_mem.inspect mirrors the entry in memory. *)
+ * cleans it up. *)
 let test_fs_dropin_persisted_and_cleaned () =
   with_tmp_runtime (fun () ->
       let us = Unit_store.Fs.create () in
@@ -180,14 +180,63 @@ let test_fs_remove_failure_is_loud () =
         (Some (Filename.concat d "pctl-runtime.conf"))
         raised)
 
-let test_in_mem_inspect () =
+let entry_opt =
+  Alcotest.(
+    option
+      (testable
+         (fun ppf (e : Unit_store.entry) ->
+           Format.fprintf ppf "{main=%S; dropin=%s}" e.main
+             (match e.dropin with None -> "None" | Some d -> Printf.sprintf "%S" d))
+         ( = )))
+
+(* read . write = id, including a write that drops the drop-in: without
+   it a stale drop-in keeps the unit Changed on every reload. In_mem
+   never had this defect, so only this test can catch it in Fs. *)
+let test_fs_read_round_trip () =
+  with_tmp_runtime (fun () ->
+      let us = Unit_store.Fs.create () in
+      Alcotest.check entry_opt "absent ⇒ None" None
+        (Unit_store.Fs.read us ~unit_:svc_a);
+      let with_dropin = sample_entry ~svc:"a" in
+      Unit_store.Fs.write us ~unit_:svc_a with_dropin;
+      Alcotest.check entry_opt "with drop-in" (Some with_dropin)
+        (Unit_store.Fs.read us ~unit_:svc_a);
+      let without = { with_dropin with dropin = None } in
+      Unit_store.Fs.write us ~unit_:svc_a without;
+      Alcotest.check entry_opt "drop-in removed by write" (Some without)
+        (Unit_store.Fs.read us ~unit_:svc_a);
+      Unit_store.Fs.remove us ~unit_:svc_a;
+      Alcotest.check entry_opt "removed ⇒ None" None
+        (Unit_store.Fs.read us ~unit_:svc_a))
+
+(* Only ENOENT reads as absent; anything else is loud. *)
+let test_fs_read_unreadable_is_loud () =
+  with_tmp_runtime (fun () ->
+      let us = Unit_store.Fs.create () in
+      Unit_store.Fs.write us ~unit_:svc_a (sample_entry ~svc:"a");
+      let main =
+        Filename.concat (Unit_store.Fs.root us)
+          (Schema.Unit_filename.to_string svc_a)
+      in
+      Unix.chmod main 0o000;
+      let raised =
+        try
+          ignore (Unit_store.Fs.read us ~unit_:svc_a);
+          None
+        with Schema.Pctl_error (Schema.Install_failed { path; _ }) -> Some path
+      in
+      Unix.chmod main 0o644;
+      Alcotest.(check (option string)) "Install_failed names the file"
+        (Some main) raised)
+
+let test_in_mem_read () =
   let us = Unit_store.In_mem.create () in
   let e : Unit_store.entry =
     { main = "main_bytes"; dropin = Some "dropin_bytes" }
   in
   Unit_store.In_mem.write us ~unit_:svc_a e;
-  match Unit_store.In_mem.inspect us ~unit_:svc_a with
-  | None -> Alcotest.fail "inspect returned None for a written unit"
+  match Unit_store.In_mem.read us ~unit_:svc_a with
+  | None -> Alcotest.fail "read returned None for a written unit"
   | Some got ->
       Alcotest.(check string) "main bytes round-tripped" "main_bytes" got.main;
       Alcotest.(check (option string))
@@ -234,10 +283,14 @@ let () =
             `Quick test_fs_remove_does_not_follow_dir_symlink;
           Alcotest.test_case "remove failure raises Uninstall_failed" `Quick
             test_fs_remove_failure_is_loud;
+          Alcotest.test_case "read round-trips write" `Quick
+            test_fs_read_round_trip;
+          Alcotest.test_case "read failure raises Install_failed" `Quick
+            test_fs_read_unreadable_is_loud;
         ] );
       ( "in_mem",
         [
-          Alcotest.test_case "inspect" `Quick test_in_mem_inspect;
+          Alcotest.test_case "read" `Quick test_in_mem_read;
           Alcotest.test_case "fail_next_write" `Quick
             test_in_mem_fail_next_write;
         ] );

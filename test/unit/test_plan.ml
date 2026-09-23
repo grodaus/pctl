@@ -1,14 +1,6 @@
-(* Manifest — pure diff correctness and qcheck properties.
- *
- * The diff lives in Projects (it's a pure function over manifest data);
- * expose it locally with a short alias so the test bodies read cleanly. *)
+(* Plan — pure diff correctness and qcheck properties. *)
 
 open Schema
-
-module Manifest = struct
-  let diff = State.Projects.diff_manifest
-  let summary = State.Projects.manifest_summary
-end
 
 module UfMap = Map.Make (Schema.Unit_filename)
 
@@ -29,30 +21,30 @@ let action_testable =
 
 let test_diff_unchanged () =
   let m = rows [ ("a.service", "h1") ] in
-  let rs = Manifest.diff ~before:m ~after:m in
+  let rs = Plan.diff ~installed:m ~rendered:m in
   Alcotest.(check int) "one row" 1 (List.length rs);
   let r = List.hd rs in
   Alcotest.check action_testable "unchanged" Unchanged r.action;
   Alcotest.(check string) "unit" "a.service" (uf_s r.unit_)
 
 let test_diff_added () =
-  let rs = Manifest.diff ~before:[] ~after:(rows [ ("a", "h1") ]) in
+  let rs = Plan.diff ~installed:[] ~rendered:(rows [ ("a", "h1") ]) in
   let r = List.hd rs in
   Alcotest.check action_testable "added" Added r.action;
   Alcotest.(check (option string)) "new_hash" (Some "h1") r.new_hash;
   Alcotest.(check (option string)) "no old" None r.old_hash
 
 let test_diff_removed () =
-  let rs = Manifest.diff ~before:(rows [ ("a", "h1") ]) ~after:[] in
+  let rs = Plan.diff ~installed:(rows [ ("a", "h1") ]) ~rendered:[] in
   let r = List.hd rs in
   Alcotest.check action_testable "removed" Removed r.action;
   Alcotest.(check (option string)) "old_hash" (Some "h1") r.old_hash
 
 let test_diff_changed () =
   let rs =
-    Manifest.diff
-      ~before:(rows [ ("a", "h1") ])
-      ~after:(rows [ ("a", "h2") ])
+    Plan.diff
+      ~installed:(rows [ ("a", "h1") ])
+      ~rendered:(rows [ ("a", "h2") ])
   in
   let r = List.hd rs in
   Alcotest.check action_testable "changed" Changed r.action;
@@ -60,9 +52,9 @@ let test_diff_changed () =
   Alcotest.(check (option string)) "new" (Some "h2") r.new_hash
 
 let test_diff_sort () =
-  let before = rows [ ("a", "1"); ("b", "2"); ("c", "3") ] in
-  let after = rows [ ("b", "2"); ("c", "9"); ("d", "4") ] in
-  let rs = Manifest.diff ~before ~after in
+  let installed = rows [ ("a", "1"); ("b", "2"); ("c", "3") ] in
+  let rendered = rows [ ("b", "2"); ("c", "9"); ("d", "4") ] in
+  let rs = Plan.diff ~installed ~rendered in
   let names = List.map (fun r -> uf_s r.unit_) rs in
   let actions = List.map (fun r -> pp_action r.action) rs in
   Alcotest.(check (list string)) "sorted" [ "a"; "b"; "c"; "d" ] names;
@@ -72,10 +64,10 @@ let test_diff_sort () =
     actions
 
 let test_diff_summary () =
-  let before = rows [ ("a", "1"); ("b", "2"); ("c", "3") ] in
-  let after = rows [ ("b", "2"); ("c", "9"); ("d", "4") ] in
-  let rs = Manifest.diff ~before ~after in
-  Alcotest.(check string) "summary" "+1 ~1 =1 -1" (Manifest.summary rs)
+  let installed = rows [ ("a", "1"); ("b", "2"); ("c", "3") ] in
+  let rendered = rows [ ("b", "2"); ("c", "9"); ("d", "4") ] in
+  let rs = Plan.diff ~installed ~rendered in
+  Alcotest.(check string) "summary" "+1 ~1 =1 -1" (Plan.counts rs)
 
 (* QCheck properties. *)
 
@@ -92,10 +84,10 @@ let arb_manifest =
 (* qcheck generates plain-string keys; lift them into the typed manifest.
  * The generator restricts keys to lowercase alpha of length 1..6, so
  * [of_string_exn] never rejects. *)
-let to_manifest (m : (string * string) list) : manifest =
+let to_manifest (m : (string * string) list) : unit_hashes =
   List.map (fun (k, v) -> (uf k, v)) m
 
-let canonicalize (m : manifest) : manifest =
+let canonicalize (m : unit_hashes) : unit_hashes =
   let map =
     List.fold_left
       (fun acc (k, v) -> UfMap.add k v acc)
@@ -108,8 +100,8 @@ let prop_diff_symmetry =
     (QCheck.pair arb_manifest arb_manifest) (fun (a, b) ->
       let a = canonicalize (to_manifest a)
       and b = canonicalize (to_manifest b) in
-      let fwd = Manifest.diff ~before:a ~after:b in
-      let rev = Manifest.diff ~before:b ~after:a in
+      let fwd = Plan.diff ~installed:a ~rendered:b in
+      let rev = Plan.diff ~installed:b ~rendered:a in
       let count_fwd act =
         List.length (List.filter (fun r -> r.action = act) fwd)
       in
@@ -122,26 +114,26 @@ let prop_diff_symmetry =
       && count_fwd Changed = count_rev Changed)
 
 let prop_diff_empty_before =
-  QCheck.Test.make ~count:200 ~name:"empty before → every row Added"
-    arb_manifest (fun after ->
-      let after = canonicalize (to_manifest after) in
-      let rs = Manifest.diff ~before:[] ~after in
-      List.length rs = List.length after
+  QCheck.Test.make ~count:200 ~name:"nothing installed → every row Added"
+    arb_manifest (fun rendered ->
+      let rendered = canonicalize (to_manifest rendered) in
+      let rs = Plan.diff ~installed:[] ~rendered in
+      List.length rs = List.length rendered
       && List.for_all (fun r -> r.action = Added) rs)
 
 let prop_diff_same =
   QCheck.Test.make ~count:200 ~name:"same → every row Unchanged" arb_manifest
     (fun m ->
       let m = canonicalize (to_manifest m) in
-      let rs = Manifest.diff ~before:m ~after:m in
+      let rs = Plan.diff ~installed:m ~rendered:m in
       List.length rs = List.length m
       && List.for_all (fun r -> r.action = Unchanged) rs)
 
 let () =
   let open Alcotest in
-  run "pctl manifest"
+  run "pctl plan"
     [
-      ( "manifest",
+      ( "diff",
         [
           test_case "unchanged" `Quick test_diff_unchanged;
           test_case "added" `Quick test_diff_added;

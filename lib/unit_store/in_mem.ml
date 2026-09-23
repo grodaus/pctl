@@ -5,9 +5,9 @@
  *   - [remove] tolerates missing units (Fs tolerates ENOENT only).
  *   - [list] returns keys sorted by [Unit_filename.compare], matching
  *     Fs.list after its [List.sort].
+ *   - [read] returns the most recently written entry (or None).
  *
  * Extras beyond the port:
- *   - [inspect] returns the most recently written entry (or None).
  *   - [fail_next_write] arms a one-shot [Install_failed] raise so tests
  *     can exercise the error path without a real fs injury. The failure
  *     fires before the hashtable is mutated, so no partial write is
@@ -45,7 +45,7 @@ let list t : Schema.Unit_filename.t list =
   Hashtbl.fold (fun k _ acc -> k :: acc) t.table []
   |> List.sort Schema.Unit_filename.compare
 
-let inspect t ~unit_ : entry option = Hashtbl.find_opt t.table unit_
+let read t ~unit_ : entry option = Hashtbl.find_opt t.table unit_
 
 let fail_next_write t ~reason : unit =
   t.fail_next_write <- Some reason

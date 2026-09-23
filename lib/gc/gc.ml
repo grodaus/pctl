@@ -99,14 +99,17 @@ module Make (M : Systemctl.S) = struct
       try State.Projects.load_manifest conn ~project_id:id_s
       with Failure _ | Schema.Pctl_error _ -> []
     in
-    let slice_unit =
-      Schema.Unit_filename.to_string (Schema.Unit_filename.slice ~id)
+    (* The slice leads even when the manifest is empty or stale: its stop
+     * is what fires the cgroup cascade. *)
+    let slice = Schema.Unit_filename.slice ~id in
+    let units =
+      slice
+      :: List.filter (fun u -> not (Schema.Unit_filename.equal u slice)) manifest
     in
-    stop_or_propagate handle ~unit_:slice_unit;
     List.iter
-      (fun (uf, _) ->
+      (fun uf ->
         stop_or_propagate handle ~unit_:(Schema.Unit_filename.to_string uf))
-      manifest;
+      units;
     (* Best-effort from here on. Note what the stops above do and do not
      * establish: [call_unit_op] is a bare Manager.StopUnit(name,
      * "replace"), so a successful return means systemd ACCEPTED the
@@ -118,19 +121,13 @@ module Make (M : Systemctl.S) = struct
      * tolerates non-existence already. *)
     ignore_best_effort (fun () ->
         let us = Unit_store.Fs.create () in
-        List.iter
-          (fun (uf, _) -> Unit_store.Fs.remove us ~unit_:uf)
-          manifest;
-        (* Defensive: some earlier paths did not persist the slice in
-         * the manifest. Removing it again is a no-op. *)
-        Unit_store.Fs.remove us ~unit_:(Schema.Unit_filename.slice ~id));
+        List.iter (fun uf -> Unit_store.Fs.remove us ~unit_:uf) units);
     (* No daemon_reload here: it is the caller's, fired once after the
      * whole row loop (pctl-e0d). Nothing between the deletions above and
      * the end of this function talks to systemd, so a per-row reload
      * bought ordering nothing needed. *)
-    (* Wipe the manifest + project row. *)
-    ignore_best_effort (fun () ->
-        State.Projects.replace_manifest conn ~project_id:id_s ~rows:[]);
+    (* The manifest rows go with the project row: ON DELETE CASCADE, with
+     * foreign_keys enabled on every connection by [State.Db.connect_uri]. *)
     ignore_best_effort (fun () ->
         State.Projects.delete_by_id conn ~id:id_s)
 

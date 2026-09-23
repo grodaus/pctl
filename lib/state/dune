@@ -5,5 +5,7 @@
  (preprocess (pps ppx_blob))
  (preprocessor_deps
   (file ../../migrations/001_init.sql)
-  (file ../../migrations/002_spec_blob.sql))
+  (file ../../migrations/002_spec_blob.sql)
+  (file ../../migrations/003_rename_store_tree_to_spec_file.sql)
+  (file ../../migrations/004_manifest_ownership.sql))
  (instrumentation (backend bisect_ppx)))

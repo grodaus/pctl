@@ -41,11 +41,32 @@ let test_migrate_idempotent () =
   (* Second run must be a no-op (no errors, version unchanged). *)
   Db.migrate conn;
   Alcotest.(check (option string))
-    "schema_version" (Some "3")
+    "schema_version" (Some "4")
     (Db.meta_get conn ~key:"schema_version");
   Alcotest.(check (option string))
     "last_boot_id starts empty" (Some "")
     (Db.meta_get conn ~key:"last_boot_id")
+
+(* 004 drops sha256 and keeps every ownership row, with the cascade. *)
+let test_migrate_004_keeps_ownership () =
+  eio_run @@ fun ~sw ~stdenv ->
+  let conn = fresh_conn ~sw ~stdenv in
+  List.iter
+    (fun (m : Db.migration) ->
+      if m.target_version <= 3 then Db.apply_migration conn m)
+    Db.migrations;
+  Db.exec_script conn
+    "INSERT INTO projects (id, path) VALUES ('p', '/tmp/p');\
+     INSERT INTO manifest (project_id, unit_filename, sha256) VALUES \
+       ('p', 'pctl-p.slice', 'h1'), ('p', 'pctl-p-web.service', 'h2')";
+  Db.migrate conn;
+  Alcotest.(check (list string)) "rows survive"
+    [ "pctl-p-web.service"; "pctl-p.slice" ]
+    (List.map Schema.Unit_filename.to_string
+       (Projects.load_manifest conn ~project_id:"p"));
+  Projects.delete_by_id conn ~id:"p";
+  Alcotest.(check int) "cascade still wired" 0
+    (List.length (Projects.load_manifest conn ~project_id:"p"))
 
 (* ----- projects CRUD -------------------------------------------- *)
 
@@ -101,27 +122,22 @@ let test_projects_crud () =
  * empty / slash-containing leaves, so these plain strings are accepted. *)
 let uf = Schema.Unit_filename.of_string_exn
 
-let stringify_manifest (m : Schema.manifest) : (string * string) list =
-  List.map (fun (k, v) -> (Schema.Unit_filename.to_string k, v)) m
+let stringify_manifest = List.map Schema.Unit_filename.to_string
 
 let test_manifest_replace () =
   eio_run @@ fun ~sw ~stdenv ->
   let conn = fresh_conn ~sw ~stdenv in
   Db.migrate conn;
   Projects.upsert conn (mk_project "proj_1" "/tmp/proj_1");
-  let first : Schema.manifest =
-    [ (uf "a.service", "h_a1"); (uf "b.service", "h_b1") ]
-  in
-  Projects.replace_manifest conn ~project_id:"proj_1" ~rows:first;
+  let first = [ uf "a.service"; uf "b.service" ] in
+  Projects.replace_manifest conn ~project_id:"proj_1" ~units:first;
   let got = Projects.load_manifest conn ~project_id:"proj_1" in
-  Alcotest.(check (list (pair string string)))
+  Alcotest.(check (list string))
     "first manifest" (stringify_manifest first) (stringify_manifest got);
-  let second : Schema.manifest =
-    [ (uf "b.service", "h_b2"); (uf "c.service", "h_c1") ]
-  in
-  Projects.replace_manifest conn ~project_id:"proj_1" ~rows:second;
+  let second = [ uf "b.service"; uf "c.service" ] in
+  Projects.replace_manifest conn ~project_id:"proj_1" ~units:second;
   let got2 = Projects.load_manifest conn ~project_id:"proj_1" in
-  Alcotest.(check (list (pair string string)))
+  Alcotest.(check (list string))
     "second manifest (replaces, doesn't merge)"
     (stringify_manifest second) (stringify_manifest got2)
 
@@ -224,7 +240,7 @@ let test_foreign_keys_cascade () =
   Db.migrate conn;
   Projects.upsert conn (mk_project "proj_1" "/tmp/proj_1");
   Projects.replace_manifest conn ~project_id:"proj_1"
-    ~rows:[ (uf "a.service", "h1"); (uf "b.service", "h2") ];
+    ~units:[ uf "a.service"; uf "b.service" ];
   Alcotest.(check int)
     "manifest inserted" 2
     (List.length (Projects.load_manifest conn ~project_id:"proj_1"));
@@ -242,6 +258,8 @@ let () =
         [
           Alcotest.test_case "migrate idempotent" `Quick
             test_migrate_idempotent;
+          Alcotest.test_case "migrate 004 keeps ownership rows" `Quick
+            test_migrate_004_keeps_ownership;
           Alcotest.test_case "projects CRUD" `Quick test_projects_crud;
           Alcotest.test_case "manifest replace wipes old" `Quick
             test_manifest_replace;

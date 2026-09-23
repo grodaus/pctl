@@ -24,6 +24,10 @@ module type UNIT_STORE = sig
   type t
 
   val write : t -> unit_:Schema.Unit_filename.t -> entry -> unit
+
+  (* [None] iff the main unit file is absent. [read (write e) = Some e]. *)
+  val read : t -> unit_:Schema.Unit_filename.t -> entry option
+
   val remove : t -> unit_:Schema.Unit_filename.t -> unit
   val list : t -> Schema.Unit_filename.t list
 end

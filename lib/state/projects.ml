@@ -1,5 +1,4 @@
-(* Projects — CRUD over the `projects` table, plus the `manifest` table
- * and the pure manifest-diff.
+(* Projects — CRUD over the `projects` table, plus the `manifest` table.
  *
  * Project row shape (migrations/001_init.sql + 002_spec_blob.sql):
  *   id           TEXT PRIMARY KEY
@@ -10,10 +9,14 @@
  *   session_id   TEXT
  *   spec_json    TEXT  -- full spec.json as persisted by the last `up`
  *
- * Manifest row shape:
+ * Manifest row shape (migrations/004_manifest_ownership.sql):
  *   project_id      TEXT
  *   unit_filename   TEXT
- *   sha256          TEXT
+ *
+ * A project's manifest is the set of unit filenames it owns — what down
+ * and gc may delete. It holds no hashes: the diff's left side is read
+ * from user.control, which does not outlive a reboot the way this table
+ * does (pctl-468).
  *
  * All functions raise [Schema.Pctl_error (Registry_io ...)] on caqti
  * failure — consumers catch once in bin/pctl.ml. *)
@@ -121,26 +124,23 @@ let clear_runtime_fields ((module C : Caqti_eio.CONNECTION)) ~id : unit =
 
 (* ---- Manifest persistence ------------------------------------------ *)
 
-(* The in-memory representation round-trips with [Schema.manifest]
- * (= (string * string) list, unit_filename -> sha256). Replace is a
- * wipe-and-reinsert inside a single transaction, so a project's
- * manifest is atomically updated per-invocation. *)
+(* Replace is a wipe-and-reinsert inside a single transaction, so a
+ * project's manifest is atomically updated. *)
 
 let manifest_delete_req =
   (string ->. unit) "DELETE FROM manifest WHERE project_id = ?"
 
 let manifest_insert_req =
-  (t3 string string string ->. unit)
-    "INSERT INTO manifest (project_id, unit_filename, sha256) \
-     VALUES (?, ?, ?)"
+  (t2 string string ->. unit)
+    "INSERT INTO manifest (project_id, unit_filename) VALUES (?, ?)"
 
 let manifest_select_req =
-  (string ->* t2 string string)
-    "SELECT unit_filename, sha256 FROM manifest \
+  (string ->* string)
+    "SELECT unit_filename FROM manifest \
      WHERE project_id = ? ORDER BY unit_filename"
 
 let replace_manifest ((module C : Caqti_eio.CONNECTION)) ~project_id
-    ~(rows : Schema.manifest) : unit =
+    ~(units : Schema.Unit_filename.t list) : unit =
   match
     C.with_transaction (fun () ->
         match C.exec manifest_delete_req project_id with
@@ -148,65 +148,19 @@ let replace_manifest ((module C : Caqti_eio.CONNECTION)) ~project_id
         | Ok () ->
             let rec loop = function
               | [] -> Ok ()
-              | (uf, sha256) :: tl -> (
+              | uf :: tl -> (
                   let unit_fn = Schema.Unit_filename.to_string uf in
-                  match C.exec manifest_insert_req (project_id, unit_fn, sha256) with
+                  match C.exec manifest_insert_req (project_id, unit_fn) with
                   | Ok () -> loop tl
                   | Error e -> Error e)
             in
-            loop rows)
+            loop (List.sort_uniq Schema.Unit_filename.compare units))
   with
   | Ok () -> ()
   | Error e -> raise_io ~id:project_id e
 
 let load_manifest ((module C : Caqti_eio.CONNECTION)) ~project_id :
-    Schema.manifest =
+    Schema.Unit_filename.t list =
   match C.collect_list manifest_select_req project_id with
-  | Ok rows ->
-      List.map
-        (fun (s, sha) -> (Schema.Unit_filename.of_string_exn s, sha))
-        rows
+  | Ok rows -> List.map Schema.Unit_filename.of_string_exn rows
   | Error e -> raise_io ~id:project_id e
-
-(* ---- Pure manifest diff (ported from pctl/lib/manifest.nu) --------- *)
-
-open Schema
-
-module UfMap = Map.Make (Schema.Unit_filename)
-
-let diff_manifest ~(before : manifest) ~(after : manifest) : plan_row list =
-  let module M = UfMap in
-  let before_m =
-    List.fold_left (fun acc (k, v) -> M.add k v acc) M.empty before
-  in
-  let after_m =
-    List.fold_left (fun acc (k, v) -> M.add k v acc) M.empty after
-  in
-  let keys =
-    M.merge
-      (fun _ a b -> match (a, b) with None, None -> None | _ -> Some ())
-      before_m after_m
-  in
-  M.bindings keys
-  |> List.map (fun (unit_, ()) ->
-         let old_hash = M.find_opt unit_ before_m in
-         let new_hash = M.find_opt unit_ after_m in
-         let action =
-           match (old_hash, new_hash) with
-           | None, Some _ -> Added
-           | Some _, None -> Removed
-           | Some a, Some b when a = b -> Unchanged
-           | Some _, Some _ -> Changed
-           | None, None -> assert false
-         in
-         { unit_; action; old_hash; new_hash })
-
-let count_by action rows =
-  List.fold_left (fun n r -> if r.action = action then n + 1 else n) 0 rows
-
-let manifest_summary rows =
-  Printf.sprintf "+%d ~%d =%d -%d"
-    (count_by Added rows)
-    (count_by Changed rows)
-    (count_by Unchanged rows)
-    (count_by Removed rows)

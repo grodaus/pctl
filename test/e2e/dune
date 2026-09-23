@@ -24,7 +24,8 @@
 (executables
  (names test_up test_up_idempotent test_reload test_down test_worktree
         test_workspace test_wait_active test_wait_probe test_wait_timeout
-        test_down_missing_units
+        test_down_missing_units test_up_after_units_vanish
+        test_unit_file_delete_keeps_process
         test_results test_host test_up_no_block test_up_no_wait
         test_logs test_status test_list test_gc
         test_gc_explicit test_pctl_no_gc test_dbus_subscribe
@@ -32,7 +33,8 @@
         test_reload_survives_reexec test_harness_reads)
  (modules test_up test_up_idempotent test_reload test_down test_worktree
           test_workspace test_wait_active test_wait_probe test_wait_timeout
-          test_down_missing_units
+          test_down_missing_units test_up_after_units_vanish
+        test_unit_file_delete_keeps_process
           test_results test_host test_up_no_block test_up_no_wait
           test_logs test_status test_list test_gc
           test_gc_explicit test_pctl_no_gc test_dbus_subscribe
@@ -55,6 +57,7 @@
        test_up.exe
        test_up_idempotent.exe
        test_reload.exe test_down.exe test_down_missing_units.exe
+       test_up_after_units_vanish.exe test_unit_file_delete_keeps_process.exe
        test_worktree.exe test_workspace.exe
        test_wait_active.exe test_wait_probe.exe test_wait_timeout.exe
        test_results.exe test_host.exe test_up_no_block.exe
@@ -73,6 +76,8 @@
    (run ./test_reload.exe)
    (run ./test_down.exe)
    (run ./test_down_missing_units.exe)
+   (run ./test_up_after_units_vanish.exe)
+   (run ./test_unit_file_delete_keeps_process.exe)
    (run ./test_worktree.exe)
    (run ./test_workspace.exe)
    (run ./test_wait_active.exe)

@@ -349,9 +349,9 @@ type unit_filename = Unit_filename.t
 (* Records                                                             *)
 (* ------------------------------------------------------------------ *)
 
-(* manifest — keyed by the final on-disk unit filename
- * (pctl-<id>-<service>.service or pctl-<id>.slice). No placeholders. *)
-type manifest = (Unit_filename.t * string) list
+(* unit filename -> content hash of main unit + drop-in. Both sides of the
+ * reload diff: [installed] (read from user.control) and [rendered]. *)
+type unit_hashes = (Unit_filename.t * string) list
 
 type plan_row = {
   unit_ : Unit_filename.t;

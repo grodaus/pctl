@@ -67,8 +67,7 @@ let install_units conn ~id_s =
       Schema.Unit_filename.service ~id ~service:"web";
     ]
   in
-  State.Projects.replace_manifest conn ~project_id:id_s
-    ~rows:(List.map (fun uf -> (uf, "sha-" ^ id_s)) units);
+  State.Projects.replace_manifest conn ~project_id:id_s ~units;
   let us = Unit_store.Fs.create () in
   List.iter
     (fun unit_ ->
@@ -370,19 +369,15 @@ let test_sweep_reloads_once_after_every_row () =
   let _ = install_units conn ~id_s:"gone_a" in
   let _ = install_units conn ~id_s:"gone_b" in
   G.opportunistic_sweep ~conn ~handle;
-  (* Each slice appears twice because [remove_project] stops it by name
-     and then again as a manifest row — one redundant StopUnit, filed as
-     pctl-gc-double-slice-stop-tmm. The manifest's own order is
-     load_manifest's, which sorts by unit filename ('-' < '.'). *)
+  (* One stop per unit, slice first, though the slice is also a manifest
+     row (pctl-gc-double-slice-stop-tmm). *)
   Alcotest.(check (list string))
     "both rows' stops, then a single trailing reload"
     [
       "stop pctl-gone_a.slice";
       "stop pctl-gone_a-web.service";
-      "stop pctl-gone_a.slice";
       "stop pctl-gone_b.slice";
       "stop pctl-gone_b-web.service";
-      "stop pctl-gone_b.slice";
       "daemon-reload";
     ]
     (Systemctl.In_mem.ops handle)

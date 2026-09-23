@@ -19,23 +19,19 @@ let () =
   let host_before = read_host () in
   Harness.assert_true ~label:"host recorded after first up"
     (String.length host_before > 0);
-  (* Second up — must not change the host or re-allocate. *)
-  Harness.check_rc_zero ~label:"second up" (Harness.up ~scratch);
+  (* Second run — must not change the host, and its diff, read from
+   * user.control, must be all Unchanged. *)
+  let rc, stdout =
+    Harness.with_captured_stdout (fun () ->
+        Eio_main.run @@ fun env ->
+        Eio.Switch.run @@ fun sw ->
+        Cli.Pipeline.Prod.reload ~sw ~env ~tree:scratch.spec_path
+          ~path:scratch.project_dir ())
+  in
+  Harness.check_rc_zero ~label:"second run" (rc, stdout);
   Harness.assert_eq_string ~label:"host stable across ups" host_before
     (read_host ());
-  (* Manifest equality between runs: both should produce the same sha256
-   * digests, so a diff would report all Unchanged. We verify by reading
-   * the current manifest from the DB and diffing it against itself. *)
-  let rows_equal =
-    Eio_main.run @@ fun env ->
-    Eio.Switch.run @@ fun sw ->
-    Cli.Pipeline.with_connection ~env ~sw (fun conn ->
-        let m = State.Projects.load_manifest conn ~project_id:id_s in
-        let rows = State.Projects.diff_manifest ~before:m ~after:m in
-        List.for_all
-          (fun (r : Schema.plan_row) -> r.action = Schema.Unchanged)
-          rows
-        && List.length rows >= 3)
-  in
-  Harness.assert_true ~label:"second-run plan is all Unchanged" rows_equal;
+  Harness.assert_true
+    ~label:("second-run plan is all Unchanged, got: " ^ stdout)
+    (Harness.contains stdout "+0 ~0 =3 -0");
   print_endline "test_up_idempotent OK"

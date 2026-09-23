@@ -87,9 +87,35 @@ let write t ~unit_ (entry : entry) : unit =
   let uf_s = Schema.Unit_filename.to_string unit_ in
   write_file ~path:(unit_path t ~unit_filename:uf_s) ~bytes:entry.main;
   match entry.dropin with
-  | None -> ()
+  | None -> rm_rf (dropin_dir t ~unit_filename:uf_s)
   | Some body ->
       write_file ~path:(dropin_file t ~unit_filename:uf_s) ~bytes:body
+
+(* ENOENT is the one errno that means "absent"; any other failure raises,
+ * since reading it as absent would restart the unit on every reload. *)
+let read_file_opt path : string option =
+  match Unix.openfile path [ Unix.O_RDONLY; Unix.O_CLOEXEC ] 0 with
+  | exception Unix.Unix_error (Unix.ENOENT, _, _) -> None
+  | exception Unix.Unix_error (e, fn, _) ->
+      raise
+        (Schema.Pctl_error
+           (Schema.Install_failed
+              { path; reason = fn ^ ": " ^ Unix.error_message e }))
+  | fd -> (
+      let ic = Unix.in_channel_of_descr fd in
+      try
+        Fun.protect
+          ~finally:(fun () -> close_in ic)
+          (fun () -> Some (really_input_string ic (in_channel_length ic)))
+      with Sys_error msg ->
+        raise (Schema.Pctl_error (Schema.Install_failed { path; reason = msg })))
+
+let read t ~unit_ : entry option =
+  let uf_s = Schema.Unit_filename.to_string unit_ in
+  match read_file_opt (unit_path t ~unit_filename:uf_s) with
+  | None -> None
+  | Some main ->
+      Some { main; dropin = read_file_opt (dropin_file t ~unit_filename:uf_s) }
 
 let remove t ~unit_ : unit =
   let uf_s = Schema.Unit_filename.to_string unit_ in

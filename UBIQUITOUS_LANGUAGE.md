@@ -13,7 +13,7 @@ _Implemented across [`lib/cli/`](./lib/cli) command modules; shared state in [`l
 | **Spec**          | The declarative Nix expression passed to `mkProject` — a record of named service definitions                 | Config, declaration     |
 | **Service**       | A single long-running process declared by the spec (`command`, `env`, `dependsOn`, `limits`, `serviceConfig`)| Process, daemon         |
 | **Up**            | Installing units, starting the slice, and starting every service in the project                              | Start, launch           |
-| **Reload**        | Recomputing the spec, diffing against the stored manifest, and minimally restarting changed services         | Restart, rebuild        |
+| **Reload**        | Re-rendering the spec, diffing against what **user.control** holds, and minimally restarting changed services | Restart, rebuild        |
 | **Down**          | Stopping the slice, removing installed units, and clearing the session-scoped columns of the **registry row** — the row itself stays | Stop, teardown          |
 
 ## Artifacts
@@ -26,7 +26,7 @@ _Rendered by [`lib/render/`](./lib/render); written to disk by [`lib/unit_store/
 | **Slice**       | The `pctl-<id>.slice` that cgroup-parents every service in a project                                                        | Group, namespace             |
 | **Spec file**   | The `/nix/store` output of `mkProject`. Because `mkProject` uses `pkgs.writeText`, the outpath IS the `spec.json` file (not a directory). OCaml renders unit files from the spec at install time. Consumed by `up` and `reload`. | Store tree, tree, bundle     |
 | **Drop-in**     | The `pctl-runtime.conf` file pctl writes into `<unit>.d/` carrying **PCTL_ID** (+ **PCTL_HOST** on services)                | Override, extension          |
-| **Manifest**    | `{ unit-filename: sha256 }` snapshot persisted on `up`/`reload`, used as the left side of the next reload diff              | Hash map, lock file          |
+| **Manifest**    | The set of unit filenames a project owns, persisted in the **registry** — the authority for what `down` and **gc** may delete. Holds no hashes: the reload diff's left side is read from **user.control** on every invocation, because the registry outlives a reboot and user.control does not | Hash map, lock file          |
 | **User.control**| `$XDG_RUNTIME_DIR/systemd/user.control/` — the live unit directory systemd --user reads, owned by `Unit_store.Fs`          | Runtime dir, unit dir        |
 | **State dir**   | A directory systemd creates from a service's `StateDirectory=`, named by a **logical suffix**                               | StateDirectory, data dir     |
 
@@ -38,7 +38,7 @@ _Derived by [`lib/identity/`](./lib/identity) (project id + host allocation); un
 | ---------------- | -------------------------------------------------------------------------------------------------------------- | ---------------------- |
 | **Project id**   | `<sanitized_basename>_<hash8>` deterministically derived from **project path**; appears in every unit name     | Name, slug             |
 | **Host**         | A `127.0.0.N` address allocated per project so concurrent projects never race on ports                         | IP, address            |
-| **Registry**     | pctl's SQLite database under `$XDG_STATE_HOME` — one **registry row** per project plus its **manifest** rows. Survives reboot; a **session reset** clears the session-scoped columns instead. | Store, state dir |
+| **Registry**     | pctl's SQLite database under `$XDG_STATE_HOME` — one **registry row** per project plus its **manifest** rows, one per owned unit filename. Survives reboot; a **session reset** clears the session-scoped columns instead. | Store, state dir |
 | **Registry row** | One project's row in the **registry**: **project id** and **project path**, which are durable, plus the session-scoped **host**, `started_at`, **spec file**, **session id** and spec JSON. Only **gc** deletes one. | Registry entry, marker |
 | **PCTL_ID**      | Env var set in every drop-in exposing the **project id** to the service process                                | —                      |
 | **PCTL_HOST**    | Env var set in service drop-ins exposing the allocated **host** to the service process                         | —                      |
@@ -65,15 +65,17 @@ _**Boot id** read by [`lib/clock/`](./lib/clock); **session reset** in [`lib/sta
 
 ## Reload diff
 
-_Diffed by [`lib/state/`](./lib/state) (`Projects.diff_manifest`); formatted for output by [`lib/plan/`](./lib/plan); applied by [`lib/lifecycle/`](./lib/lifecycle) through the [`lib/systemctl/`](./lib/systemctl) port._
+_Diffed and formatted by [`lib/plan/`](./lib/plan) (`Plan.diff ~installed ~rendered`); applied by [`lib/lifecycle/`](./lib/lifecycle) through the [`lib/systemctl/`](./lib/systemctl) port._
 
 | Term                     | Definition                                                          | Aliases to avoid |
 | ------------------------ | ------------------------------------------------------------------- | ---------------- |
 | **Plan**                 | The ordered table of `{unit, action, old_hash, new_hash}` rows a diff produces | Diff, changeset  |
-| **Action: added (+)**    | Unit present in new **manifest**, absent in old — `start` for the **slice**, `restart` for a service | New              |
-| **Action: changed (~)**  | Unit in both manifests, hashes differ — `restart` for a service, no-op for the **slice** | Updated          |
-| **Action: unchanged (=)**| Unit in both manifests, hashes equal — no-op                        | Same             |
-| **Action: removed (-)**  | Unit absent in new, present in old — `stop` and delete              | Gone, deleted    |
+| **Action: added (+)**    | Unit rendered, not installed — `start` for the **slice**, `restart` for a service | New              |
+| **Action: changed (~)**  | Unit rendered and installed, hashes differ — `restart` for a service, no-op for the **slice** | Updated          |
+| **Action: unchanged (=)**| Unit rendered and installed, hashes equal — no-op                   | Same             |
+| **Action: removed (-)**  | Unit installed, no longer rendered — `stop` and delete              | Gone, deleted    |
+
+"Installed" means an owned (**manifest**) unit whose file is in **user.control**; "rendered" means what the current **spec file** renders to.
 
 ## Readiness
 
@@ -102,7 +104,7 @@ _Three layers in [`test/unit/`](./test/unit), [`test/integration/`](./test/integ
 - A **Project** owns one **Slice** and zero-or-more **Service** units; every **Service** runs inside its **Project**'s **Slice**.
 - `mkProject` produces one **Spec file** per **Spec**; `up` and `reload` both consume a **Spec file**.
 - Each installed **Unit** has exactly one **Drop-in** carrying runtime env (**PCTL_ID** on all, **PCTL_HOST** on services only).
-- `up` writes one **Registry row** and one **Manifest**; `reload` reads the **Manifest**, computes a **Plan**, then rewrites both.
+- `up` and `reload` are one operation: read the **Manifest**, hash those units from **user.control**, diff them against the rendered units into a **Plan**, write and delete files, rewrite the **Manifest**, apply the **Plan**. The **Manifest** always names at least every pctl file on disk.
 - A **Registry row** outlives both `down` and a reboot; **Gc** is the only thing that deletes one.
 - Two **Worktrees** of the same repo have distinct **Project ids** and **Hosts** and therefore distinct **Slices** that coexist on one `systemd --user` session.
 
@@ -118,7 +120,7 @@ _Three layers in [`test/unit/`](./test/unit), [`test/integration/`](./test/integ
 
 > **Dev:** "And **reload** — what changes when I edit one service's command?"
 
-> **Domain expert:** "The new **spec file** produces a new **manifest**. Diffing against the stored **manifest** yields a **plan**: the changed service gets a `~` action, everything else `=`. `reload` runs `systemctl restart` on the `~` units only — the **slice** never bounces."
+> **Domain expert:** "The new **spec file** renders new units. Diffing them against what **user.control** holds for the project's **manifest** yields a **plan**: the changed service gets a `~` action, everything else `=`. `reload` runs `systemctl restart` on the `~` units only — the **slice** never bounces."
 
 > **Dev:** "What if I have two **worktrees** of the same repo checked out?"
 

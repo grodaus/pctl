@@ -8,13 +8,13 @@
 ; test_pctl.ml; each file covers a single concern so the runner output
 ; shows the concern name in its heading.
 (tests
- (names test_schema test_identity test_render test_manifest test_spec test_clock
+ (names test_schema test_identity test_render test_plan test_spec test_clock
         test_systemctl_sig test_bus_retry test_bus_errors test_unit_store test_probe
         test_gc)
- (modules test_schema test_identity test_render test_manifest test_spec test_clock
+ (modules test_schema test_identity test_render test_plan test_spec test_clock
           test_systemctl_sig test_bus_retry test_bus_errors test_unit_store test_probe
           test_gc)
- (libraries schema identity render state spec systemctl unit_store clock
+ (libraries schema identity render plan state spec systemctl unit_store clock
             probe gc mtime str
             eio eio_main eio.unix yojson alcotest qcheck-core qcheck-alcotest
             test_helpers test_support)

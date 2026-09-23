@@ -1,10 +1,27 @@
-(* Plan — pure formatter for the diff rendering column.
+(* Plan — the pure reload diff and its "+ / ~ / = / -" renderings.
  *
- * Historically this module also owned the Systemctl application logic
- * (the [Make] functor), but phase 5 of the Lifecycle consolidation
- * absorbed [apply_row] / [apply] into [Lifecycle.Make]. What stays
- * here is only the "+ / ~ / = / -" summary string used by
- * [pctl reload] output — pure, no I/O, no port dependency. *)
+ * [diff ~installed ~rendered]: [installed] is what user.control holds for
+ * the units this project owns, read per invocation; [rendered] is what
+ * the current spec renders to. No I/O, no port dependency. *)
+
+open Schema
+
+module UfMap = Map.Make (Schema.Unit_filename)
+
+let diff ~(installed : unit_hashes) ~(rendered : unit_hashes) : plan_row list =
+  let of_list l = List.fold_left (fun acc (k, v) -> UfMap.add k v acc) UfMap.empty l in
+  let installed_m = of_list installed and rendered_m = of_list rendered in
+  UfMap.merge
+    (fun unit_ old_hash new_hash ->
+      let row action = Some { unit_; action; old_hash; new_hash } in
+      match (old_hash, new_hash) with
+      | None, None -> None
+      | None, Some _ -> row Added
+      | Some _, None -> row Removed
+      | Some a, Some b when a = b -> row Unchanged
+      | Some _, Some _ -> row Changed)
+    installed_m rendered_m
+  |> UfMap.bindings |> List.map snd
 
 let sort_rows rows =
   (* Stable, lexicographic on unit_filename. *)
@@ -24,3 +41,13 @@ let render_summary (rows : Schema.plan_row list) : string =
            (Schema.Unit_filename.to_string r.unit_)))
     rows;
   Buffer.contents buf
+
+let count_by action rows =
+  List.fold_left (fun n r -> if r.action = action then n + 1 else n) 0 rows
+
+let counts rows =
+  Printf.sprintf "+%d ~%d =%d -%d"
+    (count_by Added rows)
+    (count_by Changed rows)
+    (count_by Unchanged rows)
+    (count_by Removed rows)

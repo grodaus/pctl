@@ -242,7 +242,7 @@ module Make (P : PORTS) = struct
             ~spec:(Some spec) ())
     in
     print_string (Plan.render_summary r.diff);
-    print_endline (State.Projects.manifest_summary r.diff)
+    print_endline (Plan.counts r.diff)
 
   let down ~sw ~env ?path ?(quiet = false) () : int =
     let work () =
