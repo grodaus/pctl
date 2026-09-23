@@ -10,12 +10,8 @@ let touch = "/run/current-system/sw/bin/touch"
 
 let () =
   Harness.skip_or_run ~name:"test_wait_probe" @@ fun () ->
-  (* Flag path must live under /run/user/<uid> so the systemd --user
-   * daemon can see it; $TMPDIR is dune's private sandbox on CI. Same
-   * rationale as Harness.fresh_tmpdir. *)
-  let tmp_base = Printf.sprintf "/run/user/%d" (Unix.getuid ()) in
   let flag =
-    Filename.concat tmp_base
+    Filename.concat (Filename.get_temp_dir_name ())
       (Printf.sprintf "pctl-wait-probe-%d-%f.flag" (Unix.getpid ())
          (Unix.gettimeofday ()))
   in

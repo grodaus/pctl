@@ -120,15 +120,17 @@ let session_skip_reason () : string option =
           Some "DBUS_SESSION_BUS_ADDRESS unset, so there is no session manager"
       | Some _ -> None)
 
-(* Make an absolute tmpdir. The caller is responsible for rm -rf.
+(* Make an absolute tmpdir under $TMPDIR. The caller is responsible for
+ * rm -rf.
  *
- * Base = /run/user/<uid>; mkdir fails loudly without it. Nothing
- * requires it: a scratch's manager is the test's own child and sees
- * whatever the test sees, so $TMPDIR would serve. Moving the base there,
- * and out of the shared per-uid runtime tmpfs, is
- * pctl-e2e-scratch-base-tmpdir-gko. *)
+ * A scratch's manager is the test's own child and sees whatever the test
+ * sees, dune's per-action $TMPDIR included, so the shared per-uid runtime
+ * tmpfs is not needed. *)
 let fresh_tmpdir prefix =
-  let base = Printf.sprintf "/run/user/%d" (Unix.getuid ()) in
+  let base = Filename.get_temp_dir_name () in
+  if Filename.is_relative base then
+    Alcotest.failf "temp dir %S is relative; scratch paths must be absolute"
+      base;
   let rec loop i =
     let candidate =
       Filename.concat base
@@ -466,6 +468,14 @@ let spawn_manager ~tmp ~state_home : manager =
           (Unix.error_message e))
     [ systemd_bin; sh_bin; session_unit_dir ];
   let runtime_dir = Filename.concat tmp "run" in
+  (* sun_path is 108 bytes including the NUL (unix(7)), and a deep $TMPDIR
+   * would otherwise surface as a manager that never answers. *)
+  let private_socket = Filename.concat runtime_dir "systemd/private" in
+  if String.length private_socket >= 108 then
+    Alcotest.failf
+      "%s is %d bytes, too long for an AF_UNIX socket path; point TMPDIR \
+       somewhere shallower"
+      private_socket (String.length private_socket);
   let config_home = Filename.concat tmp "config" in
   let data_home = Filename.concat tmp "data" in
   let unit_dir = Filename.concat tmp "units" in
