@@ -5,3 +5,5 @@ result-*
 _build/
 _coverage/
 bisect*.coverage
+# br doctor per-run artifacts
+.doctor/
