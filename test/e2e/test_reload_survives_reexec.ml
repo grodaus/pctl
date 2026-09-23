@@ -79,7 +79,7 @@ let test_reload_survives_reexec () =
       (String.concat "\n" (List.rev !failures))
 
 let () =
-  Harness.skip_or_run ~name:"reload survives reexec" @@ fun () ->
+  Harness.skip_or_run_on_session ~name:"reload survives reexec" @@ fun () ->
   (* ~and_exit:false so the summary below runs — see also
    * [Harness.skip_or_run]. *)
   Alcotest.run ~and_exit:false "pctl reload survives reexec"

@@ -2,12 +2,11 @@
 ;
 ; Each test is declared as an `executable` (not `test`) so `dune runtest`
 ; does NOT pick them up; the `e2e` alias rules below run them via
-; `dune build @e2e`. This keeps them out of the Nix sandbox — which has
-; no user dbus, no session, no /run/user/<uid> — and out of
-; `nix flake check`.
+; `dune build @e2e`. This keeps them out of the Nix sandbox, which was
+; not booted with systemd, and out of `nix flake check`.
 ;
-; Tests are gated at runtime on DBUS_SESSION_BUS_ADDRESS + /run/user/<uid>;
-; missing either → the test prints SKIP and exits 0. See test/e2e/harness.ml.
+; Tests are gated at runtime on sd_booted; without it a test prints SKIP
+; and exits 0. See Harness.skip_reason.
 
 (executable
  (name test_dbus_smoke)

@@ -13,9 +13,9 @@
  * [scratch] pointing at somebody else's manager. Only the former can be
  * torn down.
  *
- * Gating: skip_reason () returns Some <why> when the host lacks
- * DBUS_SESSION_BUS_ADDRESS or a /run/user/<uid> dir — callers exit 0
- * with a SKIP: message in that case. *)
+ * Gating: skip_reason () returns Some <why> when the machine was not
+ * booted with systemd — callers exit 0 with a SKIP: message in that
+ * case. *)
 
 let read_file path = In_channel.with_open_bin path In_channel.input_all
 
@@ -97,19 +97,32 @@ let exit_on_leaks () =
       flush stdout;
       exit 1
 
+(* sd_booted(3): the one precondition no configuration works around. A
+ * user manager refuses to start without it ("the system has not been
+ * booted with systemd"), and a Nix build sandbox never has it. Everything
+ * else a scratch needs is a failure, not a skip — see [spawn_manager]. *)
 let skip_reason () : string option =
-  match Sys.getenv_opt "DBUS_SESSION_BUS_ADDRESS" with
-  | None -> Some "DBUS_SESSION_BUS_ADDRESS unset"
-  | Some _ ->
-      let uid = Unix.getuid () in
-      let xdg_runtime = Printf.sprintf "/run/user/%d" uid in
-      if not (Sys.file_exists xdg_runtime) then
-        Some (Printf.sprintf "%s not present" xdg_runtime)
-      else None
+  match Unix.lstat "/run/systemd/system" with
+  | { Unix.st_kind = Unix.S_DIR; _ } -> None
+  | _ | (exception Unix.Unix_error _) ->
+      Some
+        "the machine was not booted with systemd (/run/systemd/system is \
+         absent), so no systemd --user can run here"
+
+(* For the one test still driving the developer's own manager rather than
+ * a scratch's (see reexec.ml). *)
+let session_skip_reason () : string option =
+  match skip_reason () with
+  | Some _ as why -> why
+  | None -> (
+      match Sys.getenv_opt "DBUS_SESSION_BUS_ADDRESS" with
+      | None | Some "" ->
+          Some "DBUS_SESSION_BUS_ADDRESS unset, so there is no session manager"
+      | Some _ -> None)
 
 (* Make an absolute tmpdir. The caller is responsible for rm -rf.
  *
- * Base = /run/user/<uid>, which [skip_reason] guarantees exists. Nothing
+ * Base = /run/user/<uid>; mkdir fails loudly without it. Nothing
  * requires it: a scratch's manager is the test's own child and sees
  * whatever the test sees, so $TMPDIR would serve. Moving the base there,
  * and out of the shared per-uid runtime tmpfs, is
@@ -442,6 +455,16 @@ let link_unit ~into u =
  * on the way out, and only once this run is the one that created it.
  * [tmp] itself belongs to the caller. *)
 let spawn_manager ~tmp ~state_home : manager =
+  (* Checked here rather than left to surface as a manager that never
+   * answers: that costs [manager_ready_timeout_s] and reads as slow, not
+   * absent. These paths are NixOS's; another distro fails here, by name. *)
+  List.iter
+    (fun p ->
+      try Unix.access p [ Unix.X_OK ]
+      with Unix.Unix_error (e, _, _) ->
+        Alcotest.failf "a nested manager needs %s, and access(X_OK) says: %s" p
+          (Unix.error_message e))
+    [ systemd_bin; sh_bin; session_unit_dir ];
   let runtime_dir = Filename.concat tmp "run" in
   let config_home = Filename.concat tmp "config" in
   let data_home = Filename.concat tmp "data" in
@@ -466,7 +489,12 @@ let spawn_manager ~tmp ~state_home : manager =
       if not (Sys.file_exists d) then Unix.mkdir d 0o700;
       link_unit ~into:d u)
     curated_wants;
-  Unix.mkdir cgroup 0o755;
+  (try Unix.mkdir cgroup 0o755
+   with Unix.Unix_error (e, _, _) ->
+     Alcotest.failf
+       "cannot create %s (%s): the delegated user-manager cgroup is not \
+        writable here, so a nested manager has nowhere to run its units"
+       cgroup (Unix.error_message e));
   let build () =
     let log_path = Filename.concat tmp "manager.log" in
     let log_fd =
@@ -1063,14 +1091,19 @@ let contains haystack needle =
  * green to red here — which is why a body calling [Alcotest.run] must
  * pass [~and_exit:false], or control never comes back. A failing case
  * raises Test_error instead, and exits non-zero just the same. *)
-let skip_or_run ~name body =
-  match skip_reason () with
+let gate_or_run ~reason ~name body =
+  match reason () with
   | Some why ->
       Printf.printf "SKIP: %s — %s\n" name why;
       exit 0
   | None ->
       body ();
       exit_on_leaks ()
+
+let skip_or_run ~name body = gate_or_run ~reason:skip_reason ~name body
+
+let skip_or_run_on_session ~name body =
+  gate_or_run ~reason:session_skip_reason ~name body
 
 let check_rc_zero ~label (rc, captured) =
   if rc <> 0 then
