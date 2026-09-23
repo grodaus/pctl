@@ -414,13 +414,11 @@ let manager_env ~runtime_dir ~user_control ~config_home ~data_home ~state_home
       "JOURNAL_STREAM";
     ]
   in
+  let excluded = List.map (fun k -> k ^ "=") (overridden @ dropped) in
   let inherited =
     Unix.environment () |> Array.to_list
     |> List.filter (fun kv ->
-           not
-             (List.exists
-                (fun k -> String.starts_with ~prefix:(k ^ "=") kv)
-                (overridden @ dropped)))
+           not (List.exists (fun prefix -> String.starts_with ~prefix kv) excluded))
   in
   Array.of_list
     (inherited
@@ -712,8 +710,7 @@ type scratch = {
 (* Point the process environment at [s]. Every consumer reads these at
  * use time — Unit_store.Fs on handle creation, sd_bus on connect, the
  * systemctl/journalctl subprocess helpers on spawn — so a test holding
- * two scratches at once must call this before each operation. See
- * test_worktree.ml.
+ * two owned scratches at once must call this before each operation.
  *
  * Nothing restores them afterwards. The next [activate] overwrites all
  * three, and the process exits without reading them again. *)
@@ -796,10 +793,11 @@ let release = Owned.release
 let setup_with = Owned.setup_with
 let setup = Owned.setup
 
-(* For the tests that need two rows in one projects table: a second
- * project on [of_]'s registry and manager, with a project_dir and
- * spec.json of its own and nothing else. See [with_sibling], which owns
- * the matching teardown. *)
+(* A second project on [of_]'s registry and manager, with a project_dir
+ * and spec.json of its own and nothing else: for a test that needs two
+ * projects, which is cheaper than two managers and, where the projects
+ * must interact through the registry or the manager, the only way. See
+ * [with_sibling], which owns the matching teardown. *)
 let sibling_scratch ~(of_ : scratch) ~prefix ~services : scratch =
   let tmp = fresh_tmpdir prefix in
   let project_dir = Filename.concat tmp "project" in

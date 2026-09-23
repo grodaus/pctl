@@ -1,60 +1,46 @@
-(* e2e parity: two worktrees get distinct ids; taking one down does not
- * affect the other.
+(* e2e parity: two worktrees get distinct ids and hosts; taking one down
+ * does not affect the other.
  *
- * Each scratch has its own registry AND its own systemd --user, and
- * Unix.putenv overwrites the globals that select both, so every
- * operation and every assertion has to name the scratch it is about:
- * `systemctl --user is-active` only ever answers about the manager the
- * environment currently points at.
- *
- * A and B are in separate managers, so the down-isolation assertion below
- * cannot fail for its own reason: nothing A's down does can reach B's
- * manager. pctl-worktree-isolation-vacuous-3gp weighs what to do about
- * that. *)
-
-let up_in (s : Harness.scratch) =
-  Harness.activate s;
-  Harness.up ~scratch:s
-
-let down_in (s : Harness.scratch) =
-  Harness.activate s;
-  Harness.down ~scratch:s
-
-let assert_active_in (s : Harness.scratch) unit_name =
-  Harness.activate s;
-  Harness.assert_unit_active unit_name
+ * One manager and one registry for both, as a developer's two worktrees
+ * have: B is a sibling of A. That is what gives the down-isolation check
+ * something to catch — A's StopUnit calls reach the manager holding B's
+ * units — and what makes distinct hosts something Host_alloc guarantees
+ * from one registry's taken set, rather than two registries' ids merely
+ * hashing apart. *)
 
 let () =
   Harness.skip_or_run ~name:"test_worktree" @@ fun () ->
-  (* Nested, not sequential: the second [with_scratch] spawns a manager and
-   * can raise, and a finaliser armed after both would not cover the first
-   * one's manager, cgroup or tmpdir. *)
   Harness.with_scratch ~services:[ Harness.service "web" ] @@ fun a ->
-  Harness.with_scratch ~services:[ Harness.service "web" ] @@ fun b ->
-  Harness.check_rc_zero ~label:"up A" (up_in a);
-  Harness.check_rc_zero ~label:"up B" (up_in b);
+  Harness.with_sibling ~of_:a ~prefix:"pctl-e2e-worktree-b"
+    ~services:[ Harness.service "web" ]
+  @@ fun b ->
+  Harness.check_rc_zero ~label:"up A" (Harness.up ~scratch:a);
+  Harness.check_rc_zero ~label:"up B" (Harness.up ~scratch:b);
   let id_a_s = Schema.Project_id.to_string (Harness.project_id a) in
   let id_b_s = Schema.Project_id.to_string (Harness.project_id b) in
   Harness.assert_true ~label:"distinct ids" (id_a_s <> id_b_s);
-  assert_active_in a (Harness.slice_name id_a_s);
-  assert_active_in b (Harness.slice_name id_b_s);
-  assert_active_in a (Harness.service_name id_a_s "web");
-  assert_active_in b (Harness.service_name id_b_s "web");
-  let read_host s id_s =
-    Harness.activate s;
+  List.iter Harness.assert_unit_active
+    [
+      Harness.slice_name id_a_s;
+      Harness.slice_name id_b_s;
+      Harness.service_name id_a_s "web";
+      Harness.service_name id_b_s "web";
+    ];
+  let host id_s =
     Eio_main.run @@ fun env ->
     Eio.Switch.run @@ fun sw ->
     Cli.Pipeline.with_connection ~env ~sw (fun conn ->
         match State.Projects.get_by_id conn ~id:id_s with
-        | Some r -> Option.value r.host ~default:""
-        | None -> "")
+        | Some { host = Some h; _ } -> h
+        | Some { host = None; _ } -> Alcotest.failf "%s has no host" id_s
+        | None -> Alcotest.failf "%s is not registered" id_s)
   in
-  Harness.assert_true ~label:"A host non-empty"
-    (String.length (read_host a id_a_s) > 0);
-  Harness.assert_true ~label:"B host non-empty"
-    (String.length (read_host b id_b_s) > 0);
-  let _ = down_in a in
-  Harness.activate b;
+  let host_a = host id_a_s and host_b = host id_b_s in
+  Harness.assert_true
+    ~label:(Printf.sprintf "distinct hosts (%s, %s)" host_a host_b)
+    (host_a <> host_b);
+  Harness.check_rc_zero ~label:"down A" (Harness.down ~scratch:a);
+  Harness.assert_unit_inactive (Harness.slice_name id_a_s);
   Harness.assert_true ~label:"B slice still active after A down"
     (Harness.is_active (Harness.slice_name id_b_s));
   Harness.assert_true ~label:"B web still active after A down"

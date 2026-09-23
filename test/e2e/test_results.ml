@@ -36,7 +36,7 @@ let simple name command =
 let () =
   Harness.skip_or_run ~name:"test_results" @@ fun () ->
   (* Mixed-outcome scenario. *)
-  (Harness.with_scratch
+  Harness.with_scratch
      ~services:
        [
          oneshot "ok" [ true_bin ];
@@ -123,9 +123,10 @@ let () =
     | other ->
         Alcotest.failf "fail state should be 'failed', got %s"
           (Option.value ~default:"(missing)" other));
-   Printf.printf "test_results OK (json, 3 rows)\n");
-  (* Happy path: two services, both end in active, exit 0. *)
-  Harness.with_scratch
+   Printf.printf "test_results OK (json, 3 rows)\n";
+  (* Happy path: two services, both end in active, exit 0. A project of
+   * its own, so the failed unit above is not in its results. *)
+  Harness.with_sibling ~of_:scratch ~prefix:"pctl-e2e-results-b"
     ~services:
       [
         oneshot "ok" [ true_bin ];
