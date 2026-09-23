@@ -188,11 +188,10 @@ let settle_timeout_s = 15.0
  * — see lib/systemctl/bus_retry.ml for how long that takes. *)
 let settle_interval_s = 0.2
 
-(* Wait for the manager to answer again, so teardown does not run inside
- * the settling window. Harness.teardown swallows every failure from its
- * `pctl down` + reset-failed + stop_unit sequence, and stop_unit is not
- * retried for peer-gone, so a NoReply there would leave the test's units
- * running with nothing printed (pctl-w53).
+(* Wait for the manager to answer again, so the test does not end inside
+ * the settling window: what runs next — [Harness.release]'s SIGTERM for a
+ * scratch's manager, the developer's own commands for the session's — is
+ * not written to survive one.
  *
  * MUST be called before the assertions, not from a [Fun.protect] finally
  * around them: this can itself fail, and a finally that raises while the

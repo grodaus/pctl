@@ -807,47 +807,10 @@ let dropin_exists ~unit_filename : bool =
 let read_dropin ~unit_filename : string =
   read_file (dropin_path_on_disk ~unit_filename)
 
-(* Best-effort teardown: calls Down.run, then [release]. Any error from
- * Down (already-down; manifest wiped) is swallowed — a teardown must
- * never block another test from running.
- *
- * The down + reset-failed + stop_unit sequence duplicates what the
- * manager's own death does to its units and their tombstones; retiring it
- * is pctl-nested-manager-harness-nak.3. All of it needs the manager's
- * bus, so it runs first — and inside a Fun.protect, because
- * Systemctl.Dbus.connect raises when the manager is already gone, which
- * is precisely the case where [release] must still run.
- *
- * [activate] first: both [Cli.Pipeline.Prod.down] and the bus connection
- * pick their manager out of the environment, so tearing down a scratch
- * that is not the current one would quietly drive somebody else's. *)
-let teardown (o : owned) =
-  let s = scratch_of o in
-  activate s;
-  let id = try Some (project_id s) with _ -> None in
-  Fun.protect
-    ~finally:(fun () -> release o)
-    (fun () ->
-      Eio_main.run (fun env ->
-          Eio.Switch.run (fun sw ->
-              (try
-                 ignore
-                   (Cli.Pipeline.Prod.down ~sw ~env ~path:s.project_dir
-                      ~quiet:true ())
-               with _ -> ());
-              match id with
-              | None -> ()
-              | Some id -> (
-                  let id_s = Schema.Project_id.to_string id in
-                  let slice = Printf.sprintf "pctl-%s.slice" id_s in
-                  match Systemctl.Dbus.connect ~sw env with
-                  | exception Schema.Pctl_error _ -> ()
-                  | handle ->
-                      (try Systemctl.Dbus.reset_failed_unit handle ~unit:slice
-                       with _ -> ());
-                      (try Systemctl.Dbus.stop_unit handle ~unit:slice
-                       with _ -> ());
-                      Systemctl.Dbus.close handle))))
+(* No `pctl down` first: the manager's death takes every unit it held,
+ * failed ones included, and the registry and user.control are inside the
+ * scratch [release] deletes. *)
+let teardown = release
 
 (* argv, not a shell string: [systemctl_read]'s failure message quotes
  * it, and stderr has to come back separately from the answer. *)
@@ -1072,18 +1035,11 @@ let with_scratch_late build_services f =
     ~finally:(fun () -> teardown o)
     (fun () -> f (scratch_of o))
 
-(* [sibling_scratch] plus its teardown, which is not [teardown]: a sibling
- * owns no manager and no environment, only a project on [of_]'s. *)
+(* A sibling owns only its tmpdir. Its units and registry row live in
+ * [of_]'s manager and state dir, and go when [of_] is torn down. *)
 let with_sibling ~of_ ~prefix ~services f =
   let s = sibling_scratch ~of_ ~prefix ~services in
-  Fun.protect
-    ~finally:(fun () ->
-      (* [activate] for the same reason [teardown] does it: [down] picks
-       * its manager and its registry out of the environment. *)
-      activate s;
-      (try ignore (down ~scratch:s) with _ -> ());
-      rm_rf s.tmp)
-    (fun () -> f s)
+  Fun.protect ~finally:(fun () -> rm_rf s.tmp) (fun () -> f s)
 
 (* ------------------------------------------------------------------ *)
 (* Assertion helpers — collapse repetition in the 20 e2e test files.

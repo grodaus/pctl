@@ -153,11 +153,10 @@ let () =
   in
   (* Order is load-bearing, and [Reexec.settle]'s header says why: stop the
      kicker, wait for the manager, and only THEN raise anything. Every
-     assertion below aborts the test, and Harness.teardown runs on the way
-     out swallowing whatever it hits — so a check that fires before the
-     manager is answering again leaves this project's units running with
-     nothing printed. The cap-fired path is both the likeliest to be
-     unsettled and the one that reports a failure. *)
+     assertion below aborts the test straight into Harness.teardown, so a
+     check that fires first reaps a manager still inside the window. The
+     cap-fired path is both the likeliest to be unsettled and the one that
+     reports a failure. *)
   Reexec.request_stop k;
   Reexec.settle ~probe:(fun () -> ignore (S.Dbus.unit_state t ~unit:unit_name));
   Reexec.check_not_capped k ended;
