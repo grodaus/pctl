@@ -3,10 +3,8 @@
 
 let () =
   Harness.skip_or_run ~name:"test_reload" @@ fun () ->
-  let s =
-    Harness.setup ~services:[ Harness.service "web"; Harness.service "db" ]
-  in
-  Fun.protect ~finally:(fun () -> Harness.teardown s) @@ fun () ->
+  Harness.with_scratch ~services:[ Harness.service "web"; Harness.service "db" ]
+  @@ fun s ->
   Harness.check_rc_zero ~label:"up" (Harness.up ~scratch:s);
   let id = Harness.project_id s in
   let id_s = Schema.Project_id.to_string id in

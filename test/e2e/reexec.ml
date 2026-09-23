@@ -13,11 +13,19 @@
  * sibling fiber could only ever fire between calls — never inside one,
  * which is the case that matters.
  *
- * REEXECS THE DEVELOPER'S USER MANAGER. That is the same operation every
- * `nixos-rebuild switch` performs; running units are preserved across it.
- * Tests using this module must be last in the e2e progn (see
- * test/e2e/dune) and must let the manager settle before tearing down —
- * see [settle]. *)
+ * The kicker's `systemctl --user` inherits the process environment, so it
+ * reexecs whichever manager that names. The two callers differ here:
+ * test_unit_state_survives_reexec takes a scratch, so it reexecs its own
+ * nested manager; test_reload_survives_reexec takes none and connects to
+ * the ambient bus, so it REEXECS THE DEVELOPER'S SESSION MANAGER, as many
+ * times as its own max_reexecs. That is the same operation every
+ * `nixos-rebuild switch` performs, and running units survive it — but it
+ * is why the e2e alias still orders both tests last. Giving the second one
+ * a scratch is pctl-nested-manager-harness-nak.6, which also decides
+ * whether either test can become deterministic.
+ *
+ * Tests using this module must let the manager settle before tearing
+ * down — see [settle]. *)
 
 let gap_s = 3
 
@@ -61,13 +69,9 @@ let make ~label ~max_reexecs =
     max_reexecs;
   }
 
-let read_file path =
-  if not (Sys.file_exists path) then ""
-  else
-    let ic = open_in_bin path in
-    Fun.protect
-      ~finally:(fun () -> close_in_noerr ic)
-      (fun () -> really_input_string ic (in_channel_length ic))
+(* Absent marker/tally/log files are the normal early state, not an
+ * error, so they read as empty. *)
+let read_file path = if Sys.file_exists path then Harness.read_file path else ""
 
 let count_lines path =
   read_file path |> String.split_on_char '\n'
@@ -111,8 +115,11 @@ let clear t =
   List.iter (fun p -> if Sys.file_exists p then Sys.remove p) (paths t)
 
 (* Ask the kicker to stop before its next reexec. Used by a test that has
- * already observed what it came for, so the developer's manager is not
- * reexec'd more times than the evidence needs. *)
+ * already observed what it came for. For test_unit_state_survives_reexec
+ * that only saves time, since the manager is its own;
+ * test_reload_survives_reexec calls it once its assertions are due, which
+ * is what bounds how many times the developer's session manager is
+ * reexec'd. *)
 let request_stop t =
   let oc = open_out t.stop in
   close_out oc
@@ -155,9 +162,7 @@ type ended = Kicker_done | Cap_fired
  * Do not add one. *)
 let poll_until_finished t (f : unit -> unit) : int * ended =
   let elapsed = Mtime_clock.counter () in
-  let capped () =
-    Mtime.Span.to_float_ns (Mtime_clock.count elapsed) /. 1e9 >= hard_cap_s t
-  in
+  let capped () = Harness.elapsed_s elapsed >= hard_cap_s t in
   let iterations = ref 0 in
   while (not (finished t)) && not (capped ()) do
     incr iterations;
@@ -177,6 +182,12 @@ let check_not_capped t = function
         (let l = read_file t.log in
          if String.trim l = "" then "(empty)" else l)
 
+let settle_timeout_s = 15.0
+
+(* Every attempt is a bus round trip against a manager that is coming back
+ * — see lib/systemctl/bus_retry.ml for how long that takes. *)
+let settle_interval_s = 0.2
+
 (* Wait for the manager to answer again, so teardown does not run inside
  * the settling window. Harness.teardown swallows every failure from its
  * `pctl down` + reset-failed + stop_unit sequence, and stop_unit is not
@@ -194,20 +205,24 @@ let check_not_capped t = function
  * a peer-gone retry budget ([Dbus.daemon_reload]) reports success while the
  * peer is still away, which is the opposite of what this asks. *)
 let settle ~(probe : unit -> unit) =
-  let deadline = Mtime_clock.counter () in
-  let rec go last =
-    let waited = Mtime.Span.to_float_ns (Mtime_clock.count deadline) /. 1e9 in
-    if waited >= 15.0 then
-      Alcotest.failf
-        "the user manager did not answer again within %.0fs of the last \
-         reexec; last failure: %s"
-        waited
-        (Option.value last ~default:"(none)")
-    else
-      match probe () with
-      | () -> ()
-      | exception Schema.Pctl_error e ->
-          Unix.sleepf 0.2;
-          go (Some (Schema.render_error e))
+  let last = ref "(none)" in
+  let waited = Mtime_clock.counter () in
+  let answered () =
+    match probe () with
+    | () -> true
+    | exception Schema.Pctl_error e ->
+        last := Schema.render_error e;
+        false
   in
-  go None
+  if
+    not
+      (Harness.poll_until ~timeout_s:settle_timeout_s
+         ~interval_s:settle_interval_s answered)
+  then
+    (* The elapsed time, not the budget: poll_until probes before it checks
+     * the clock, so a blocked probe overruns it and the difference is the
+     * diagnosis. *)
+    Alcotest.failf
+      "the user manager did not answer again within %.1fs of the last reexec; \
+       last failure: %s"
+      (Harness.elapsed_s waited) !last

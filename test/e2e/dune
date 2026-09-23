@@ -41,12 +41,13 @@
  (libraries e2e_harness schema identity unit_store cli state systemctl yojson
             str eio eio_main eio.unix alcotest unix mtime mtime.clock.os))
 
-; IMPORTANT: all tests run against the SAME systemd --user session.
-; Dune parallelises alias dependencies by default, which would cause
-; races (one test's install step clobbering another's; all tests see
-; the same XDG_RUNTIME_DIR). We collapse them into ONE rule whose action
-; runs every test sequentially — this is the simplest way to force
-; serialisation under `dune build @e2e`.
+; One rule, running every test in sequence, forces the serialisation dune
+; would otherwise not give an alias. The races it was built for — one
+; test's install step clobbering another's, every test sharing one
+; XDG_RUNTIME_DIR — cannot happen to a test that owns its own manager and
+; runtime dir. What still needs it is test_reload_survives_reexec; see
+; test/e2e/reexec.ml. Retiring the collapse, and measuring what parallel
+; actually costs, is pctl-nested-manager-harness-nak.5.
 
 (rule
  (alias e2e)
@@ -86,8 +87,7 @@
    (run ./test_gc_explicit.exe)
    (run ./test_pctl_no_gc.exe)
    (run ./test_depends_on_wait.exe)
-   ; Last two: these reexec the user manager — the only tests that touch
-   ; anything outside their own slice. Nothing after them should need the
-   ; manager to have stayed put.
+   ; Last two: these daemon-reexec a manager. Which one, and what that
+   ; costs the developer's session, is in test/e2e/reexec.ml's header.
    (run ./test_unit_state_survives_reexec.exe)
    (run ./test_reload_survives_reexec.exe))))

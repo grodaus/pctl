@@ -80,9 +80,8 @@ let test_reload_survives_reexec () =
 
 let () =
   Harness.skip_or_run ~name:"reload survives reexec" @@ fun () ->
-  (* ~and_exit:false so the summary below runs. A failing case raises
-   * Test_error instead, which exits non-zero and stops the e2e progn
-   * just the same. *)
+  (* ~and_exit:false so the summary below runs — see also
+   * [Harness.skip_or_run]. *)
   Alcotest.run ~and_exit:false "pctl reload survives reexec"
     [
       ( "daemon_reload",

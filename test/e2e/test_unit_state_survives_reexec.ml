@@ -57,7 +57,9 @@
  * Scope: the OUTCOME (a bus fault is never laundered into a state), not
  * which names are tolerated — that is test_bus_errors.ml's job.
  *
- * REEXECS THE DEVELOPER'S USER MANAGER, up to [max_reexecs] times. *)
+ * Reexecs its own scratch's manager, up to [max_reexecs] times, so
+ * nothing outside the scratch is disturbed — unlike
+ * test_reload_survives_reexec; [Reexec]'s header has both. *)
 
 module S = Systemctl
 
@@ -142,8 +144,8 @@ let () =
         bump op;
         if not (Hashtbl.mem first_of_op op) then
           Hashtbl.add first_of_op op (Schema.render_error e);
-        (* Got what we came for: let the kicker stop rather than spend the
-           developer's manager on reexecs that add nothing. *)
+        (* Got what we came for: let the kicker stop rather than spend
+           wall clock on reexecs that add nothing. *)
         if op = getunit_op then Reexec.request_stop k
     | exception Schema.Pctl_error e ->
         Alcotest.failf "unexpected error shape from unit_state: %s"

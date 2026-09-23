@@ -17,22 +17,8 @@ let () =
    * "not registered" on stderr. *)
   Harness.with_scratch ~services:[ Harness.service "web" ]
   @@ fun scratch ->
-  let tmp = Filename.temp_file "pctl-e2e-stderr" ".log" in
-  let fd = Unix.openfile tmp [ Unix.O_WRONLY; Unix.O_TRUNC ] 0o600 in
-  let saved = Unix.dup Unix.stderr in
-  Unix.dup2 fd Unix.stderr;
-  Unix.close fd;
-  let rc, stdout = Harness.host ~scratch in
-  flush Stdlib.stderr;
-  Unix.dup2 saved Unix.stderr;
-  Unix.close saved;
-  let stderr_text =
-    let ic = open_in tmp in
-    let n = in_channel_length ic in
-    let s = really_input_string ic n in
-    close_in ic;
-    (try Sys.remove tmp with _ -> ());
-    s
+  let (rc, stdout), stderr_text =
+    Harness.with_captured_stderr (fun () -> Harness.host ~scratch)
   in
   if rc = 0 then
     Alcotest.failf "host on unregistered project exit=0, stdout=%s" stdout;

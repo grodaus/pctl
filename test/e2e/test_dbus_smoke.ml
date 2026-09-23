@@ -51,7 +51,8 @@ let test_unit_state_reads_a_valid_variant () =
 
 let () =
   Harness.skip_or_run ~name:"dbus smoke" @@ fun () ->
-  Alcotest.run "pctl dbus smoke"
+  (* ~and_exit:false — see [Harness.skip_or_run]. *)
+  Alcotest.run ~and_exit:false "pctl dbus smoke"
     [
       ( "dbus",
         [
