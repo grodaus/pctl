@@ -17,7 +17,7 @@
  * booted with systemd — callers exit 0 with a SKIP: message in that
  * case. *)
 
-let read_file path = In_channel.with_open_bin path In_channel.input_all
+let read_file = Test_support.read_file
 
 let elapsed_s (c : Mtime_clock.counter) : float =
   Mtime.Span.to_float_ns (Mtime_clock.count c) /. 1e9
@@ -1085,13 +1085,7 @@ let with_sibling ~of_ ~prefix ~services f =
  * [Alcotest.failf] so test output matches prior behaviour. *)
 (* ------------------------------------------------------------------ *)
 
-let contains haystack needle =
-  needle = ""
-  ||
-  try
-    ignore (Str.search_forward (Str.regexp_string needle) haystack 0);
-    true
-  with Not_found -> false
+let contains = Test_support.contains
 
 (* A body that raises is left alone: the runtime prints it and exits
  * non-zero, and the leaks [report_leak] already wrote to stderr are part

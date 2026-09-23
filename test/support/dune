@@ -1,0 +1,5 @@
+; Helpers shared by every test layer (unit, integration, e2e).
+(library
+ (name test_support)
+ (modules test_support)
+ (libraries str))

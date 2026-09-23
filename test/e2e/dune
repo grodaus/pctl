@@ -18,7 +18,8 @@
  (wrapped false)
  (modules harness reexec)
  (libraries schema identity unit_store cli spec state systemctl yojson str
-            eio eio_main eio.unix alcotest unix mtime mtime.clock.os))
+            eio eio_main eio.unix alcotest unix mtime mtime.clock.os
+            test_support))
 
 (executables
  (names test_up test_up_idempotent test_reload test_down test_worktree

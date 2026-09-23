@@ -155,7 +155,7 @@ let test_spec_load_missing_kind () =
       check_raises_pctl ~name:"missing kind"
         ~predicate:(function
           | Spec_parse { msg; _ } ->
-              Test_helpers.contains_substring msg "kind"
+              Test_support.contains msg "kind"
           | _ -> false)
         (fun () -> Spec.load (Fpath.v path)))
 
@@ -172,7 +172,7 @@ let test_spec_load_missing_service_config () =
       check_raises_pctl ~name:"missing service_config"
         ~predicate:(function
           | Spec_parse { msg; _ } ->
-              Test_helpers.contains_substring msg "service_config"
+              Test_support.contains msg "service_config"
           | _ -> false)
         (fun () -> Spec.load (Fpath.v path)))
 
@@ -190,7 +190,7 @@ let test_spec_load_bad_service_config_value () =
       check_raises_pctl ~name:"non-string service_config value"
         ~predicate:(function
           | Spec_parse { msg; _ } ->
-              Test_helpers.contains_substring msg "ExecStart"
+              Test_support.contains msg "ExecStart"
           | _ -> false)
         (fun () -> Spec.load (Fpath.v path)))
 
@@ -208,7 +208,7 @@ let test_spec_load_bad_kind () =
       check_raises_pctl ~name:"unknown kind"
         ~predicate:(function
           | Spec_parse { msg; _ } ->
-              Test_helpers.contains_substring msg "zombie"
+              Test_support.contains msg "zombie"
           | _ -> false)
         (fun () -> Spec.load (Fpath.v path)))
 
@@ -230,7 +230,7 @@ let test_spec_load_command_with_newline () =
       check_raises_pctl ~name:"command with newline"
         ~predicate:(function
           | Spec_parse { msg; _ } ->
-              Test_helpers.contains_substring msg "newline"
+              Test_support.contains msg "newline"
           | _ -> false)
         (fun () -> Spec.load (Fpath.v path)))
 
@@ -248,7 +248,7 @@ let test_spec_load_empty_command () =
       check_raises_pctl ~name:"empty command"
         ~predicate:(function
           | Spec_parse { msg; _ } ->
-              Test_helpers.contains_substring msg "command"
+              Test_support.contains msg "command"
           | _ -> false)
         (fun () -> Spec.load (Fpath.v path)))
 

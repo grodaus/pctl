@@ -2,7 +2,7 @@
 (library
  (name test_helpers)
  (modules test_helpers)
- (libraries str unix ctypes ctypes-foreign))
+ (libraries unix ctypes ctypes-foreign))
 
 ; Per-module unit test executables. Split out of the old monolithic
 ; test_pctl.ml; each file covers a single concern so the runner output
@@ -17,5 +17,5 @@
  (libraries schema identity render state spec systemctl unit_store clock
             probe gc mtime str
             eio eio_main eio.unix yojson alcotest qcheck-core qcheck-alcotest
-            test_helpers)
+            test_helpers test_support)
  (deps (source_tree fixtures)))

@@ -4,27 +4,9 @@
  * copies them into each test's build dir. Tests run with cwd = that dir, so
  * a relative path under fixtures/ works. *)
 
-let read_file p =
-  let ic = open_in p in
-  let n = in_channel_length ic in
-  let s = really_input_string ic n in
-  close_in ic;
-  s
-
 let render_fixture_dir = "fixtures/render"
 let render_fixture p = Filename.concat render_fixture_dir p
 let spec_fixture name = Filename.concat "fixtures/spec" (name ^ ".json")
-
-(* Substring predicate — alcotest lacks string-contains. Used by the
- * spec-loader tests to verify the offending field name appears in the
- * error text. *)
-let contains_substring haystack needle =
-  needle = ""
-  ||
-  try
-    ignore (Str.search_forward (Str.regexp_string needle) haystack 0);
-    true
-  with Not_found -> false
 
 (* Write a string to a fresh temp file; return its path. Tests that need
  * hand-crafted malformed input (the good-path fixtures come from

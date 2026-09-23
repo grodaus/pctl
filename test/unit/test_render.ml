@@ -27,7 +27,7 @@ let test_render_simple_service () =
       ~project_path:(Schema.Project_path.of_raw "/home/me/project")
   in
   let expected =
-    Test_helpers.read_file (Test_helpers.render_fixture "simple_service.expected")
+    Test_support.read_file (Test_helpers.render_fixture "simple_service.expected")
   in
   Alcotest.(check string) "simple service golden" expected got
 
@@ -55,7 +55,7 @@ let test_render_service_with_workspace () =
       ~project_path:(Schema.Project_path.of_raw "/home/me/project")
   in
   let expected =
-    Test_helpers.read_file
+    Test_support.read_file
       (Test_helpers.render_fixture "bindpaths_service.expected")
   in
   Alcotest.(check string) "workspace + user description golden" expected got
@@ -77,7 +77,7 @@ let test_render_service_with_deps () =
       ~project_path:(Schema.Project_path.of_raw "/home/me/project")
   in
   let expected =
-    Test_helpers.read_file (Test_helpers.render_fixture "deps_service.expected")
+    Test_support.read_file (Test_helpers.render_fixture "deps_service.expected")
   in
   Alcotest.(check string) "depends_on → Requires/After golden" expected got
 
@@ -100,7 +100,7 @@ let test_render_slice () =
   in
   let got = Render.slice ~slice:slc ~id:id_demo in
   let expected =
-    Test_helpers.read_file (Test_helpers.render_fixture "slice.expected")
+    Test_support.read_file (Test_helpers.render_fixture "slice.expected")
   in
   Alcotest.(check string) "slice golden" expected got
 

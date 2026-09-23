@@ -319,7 +319,7 @@ let test_describe_exn_renders_pctl_error () =
      payload, so the warning would name no unit and no reply. *)
   Alcotest.(check bool)
     "Printexc alone loses the reply" false
-    (Test_helpers.contains_substring (Printexc.to_string e)
+    (Test_support.contains (Printexc.to_string e)
        stop_failure_reply)
 
 let test_purge_skips_row_whose_stop_fails () =
