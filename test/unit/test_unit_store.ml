@@ -130,6 +130,56 @@ let test_fs_dropin_persisted_and_cleaned () =
         "dropin file removed" false
         (Sys.file_exists dropin_path))
 
+let dropin_dir_of us uf =
+  Filename.concat (Unit_store.Fs.root us)
+    (Schema.Unit_filename.to_string uf ^ ".d")
+
+let test_fs_remove_dangling_symlink () =
+  with_tmp_runtime (fun () ->
+      let us = Unit_store.Fs.create () in
+      Unit_store.Fs.write us ~unit_:svc_a (sample_entry ~svc:"a");
+      let d = dropin_dir_of us svc_a in
+      Unix.symlink "/nonexistent-pctl-target" (Filename.concat d "dangling");
+      Unit_store.Fs.remove us ~unit_:svc_a;
+      Alcotest.(check bool) "dropin dir removed" false (Sys.file_exists d))
+
+let test_fs_remove_does_not_follow_dir_symlink () =
+  with_tmp_runtime (fun () ->
+      let us = Unit_store.Fs.create () in
+      Unit_store.Fs.write us ~unit_:svc_a (sample_entry ~svc:"a");
+      let outside = Filename.concat (Sys.getenv "XDG_RUNTIME_DIR") "outside" in
+      Unix.mkdir outside 0o700;
+      let kept = Filename.concat outside "kept" in
+      Out_channel.with_open_bin kept (fun oc -> output_string oc "x");
+      let d = dropin_dir_of us svc_a in
+      Unix.symlink outside (Filename.concat d "link");
+      Unit_store.Fs.remove us ~unit_:svc_a;
+      Alcotest.(check bool) "dropin dir removed" false (Sys.file_exists d);
+      Alcotest.(check bool) "link target untouched" true (Sys.file_exists kept))
+
+(* root ignores directory permissions, so the injury below cannot fail. *)
+let test_fs_remove_failure_is_loud () =
+  if Unix.geteuid () = 0 then Alcotest.skip ();
+  with_tmp_runtime (fun () ->
+      let us = Unit_store.Fs.create () in
+      Unit_store.Fs.write us ~unit_:svc_a (sample_entry ~svc:"a");
+      let d = dropin_dir_of us svc_a in
+      Unix.chmod d 0o500;
+      let raised =
+        Fun.protect
+          ~finally:(fun () -> Unix.chmod d 0o700)
+          (fun () ->
+            try
+              Unit_store.Fs.remove us ~unit_:svc_a;
+              None
+            with Schema.Pctl_error (Schema.Uninstall_failed { path; _ }) ->
+              Some path)
+      in
+      Alcotest.(check (option string))
+        "Uninstall_failed names the entry"
+        (Some (Filename.concat d "pctl-runtime.conf"))
+        raised)
+
 let test_in_mem_inspect () =
   let us = Unit_store.In_mem.create () in
   let e : Unit_store.entry =
@@ -178,6 +228,12 @@ let () =
         [
           Alcotest.test_case "dropin lifecycle" `Quick
             test_fs_dropin_persisted_and_cleaned;
+          Alcotest.test_case "remove unlinks a dangling symlink" `Quick
+            test_fs_remove_dangling_symlink;
+          Alcotest.test_case "remove does not follow a directory symlink"
+            `Quick test_fs_remove_does_not_follow_dir_symlink;
+          Alcotest.test_case "remove failure raises Uninstall_failed" `Quick
+            test_fs_remove_failure_is_loud;
         ] );
       ( "in_mem",
         [

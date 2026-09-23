@@ -92,6 +92,7 @@ type error =
   | Spec_unknown_version of int
   | Nix_build_failed of { expr : string; exit_code : int; stderr : string }
   | Install_failed of { path : string; reason : string }
+  | Uninstall_failed of { path : string; reason : string }
   | Bus_connect_failed of { msg : string }
   (* [error_name] is the D-Bus error name the reply carried, e.g.
    * "org.freedesktop.systemd1.NoSuchUnit". It is what callers classify
@@ -477,6 +478,8 @@ let render_error = function
         stderr
   | Install_failed { path; reason } ->
       Printf.sprintf "install failed for %s: %s" path reason
+  | Uninstall_failed { path; reason } ->
+      Printf.sprintf "uninstall failed for %s: %s" path reason
   | Bus_connect_failed { msg } ->
       Printf.sprintf "sd-bus connect failed: %s" msg
   | Unit_op_failed { op; unit_; reply; error_name = _ } ->
@@ -507,7 +510,7 @@ let error_exit_code = function
   | Identity_invalid _ ->
       2
   | Nix_build_failed _ -> 3
-  | Install_failed _ | Registry_io _ -> 4
+  | Install_failed _ | Uninstall_failed _ | Registry_io _ -> 4
   | Bus_connect_failed _ | Unit_op_failed _ -> 5
   | Probe_timeout _ -> 6
   (* Journalctl's own exit code bubbles up — we don't override it with

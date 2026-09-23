@@ -58,14 +58,29 @@ let write_file ~path ~bytes =
   with Sys_error msg ->
     raise (Schema.Pctl_error (Schema.Install_failed { path; reason = msg }))
 
+(* ENOENT is the one tolerated errno: removing what is already gone is the
+ * idempotence [remove] promises. *)
+let unix_or_uninstall_failed p f =
+  let fail reason =
+    raise (Schema.Pctl_error (Schema.Uninstall_failed { path = p; reason }))
+  in
+  try f () with
+  | Unix.Unix_error (Unix.ENOENT, _, _) -> ()
+  | Unix.Unix_error (e, fn, _) -> fail (fn ^ ": " ^ Unix.error_message e)
+  | Sys_error msg -> fail msg
+
+(* lstat, not Sys.file_exists / Sys.is_directory: both follow symlinks, so
+ * a dangling link is skipped (and its directory then cannot be removed)
+ * and a link to a directory is descended into rather than unlinked. *)
 let rec rm_rf p =
-  if not (Sys.file_exists p) then ()
-  else if Sys.is_directory p then begin
-    let entries = try Sys.readdir p with Sys_error _ -> [||] in
-    Array.iter (fun name -> rm_rf (Filename.concat p name)) entries;
-    try Unix.rmdir p with Unix.Unix_error _ | Sys_error _ -> ()
-  end
-  else try Sys.remove p with Sys_error _ -> ()
+  unix_or_uninstall_failed p (fun () ->
+      match (Unix.lstat p).st_kind with
+      | Unix.S_DIR ->
+          Array.iter
+            (fun name -> rm_rf (Filename.concat p name))
+            (Sys.readdir p);
+          Unix.rmdir p
+      | _ -> Unix.unlink p)
 
 let write t ~unit_ (entry : entry) : unit =
   mkdir_p t.root;
@@ -79,7 +94,8 @@ let write t ~unit_ (entry : entry) : unit =
 let remove t ~unit_ : unit =
   let uf_s = Schema.Unit_filename.to_string unit_ in
   rm_rf (dropin_dir t ~unit_filename:uf_s);
-  try Sys.remove (unit_path t ~unit_filename:uf_s) with Sys_error _ -> ()
+  let main = unit_path t ~unit_filename:uf_s in
+  unix_or_uninstall_failed main (fun () -> Unix.unlink main)
 
 (* Only entries ending in [.slice] or [.service] are pctl-managed main
    unit files. In particular, the companion [<unit>.d/] drop-in

@@ -2,7 +2,7 @@
  *
  * Mirrors [Fs]'s observable semantics without touching the filesystem:
  *   - [write] overwrites any prior entry for the same unit.
- *   - [remove] tolerates missing units (matches Fs's [Sys.remove … with _]).
+ *   - [remove] tolerates missing units (Fs tolerates ENOENT only).
  *   - [list] returns keys sorted by [Unit_filename.compare], matching
  *     Fs.list after its [List.sort].
  *

@@ -309,6 +309,8 @@ let test_error_rendering () =
         "nix build '.#x' failed with exit 1:\noops" );
       ( Install_failed { path = "/dst"; reason = "eacces" },
         "install failed for /dst: eacces" );
+      ( Uninstall_failed { path = "/dst"; reason = "eacces" },
+        "uninstall failed for /dst: eacces" );
       ( Bus_connect_failed { msg = "no socket" },
         "sd-bus connect failed: no socket" );
       (* [op] is a D-Bus method name, which is what the Dbus adapter
@@ -345,6 +347,7 @@ let test_error_exit_codes () =
       (Identity_invalid { path = ""; reason = "" }, 2);
       (Nix_build_failed { expr = ""; exit_code = 0; stderr = "" }, 3);
       (Install_failed { path = ""; reason = "" }, 4);
+      (Uninstall_failed { path = ""; reason = "" }, 4);
       (Registry_io { id = ""; reason = "" }, 4);
       (Bus_connect_failed { msg = "" }, 5);
       ( Unit_op_failed { op = ""; unit_ = ""; error_name = None; reply = "" },
